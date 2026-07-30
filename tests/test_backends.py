@@ -196,6 +196,54 @@ def test_ollama_flags_an_empty_response(monkeypatch):
     assert "length" in OllamaBackend(model="m").generate("p").warning
 
 
+def test_ollama_rejects_an_unknown_think_mode():
+    with pytest.raises(ValueError):
+        OllamaBackend(model="m", think="verbose")
+
+
+def test_ollama_merge_folds_thinking_ahead_of_the_response(monkeypatch):
+    import json as _json
+
+    class FakeResponse:
+        def read(self):
+            return _json.dumps({
+                "response": "The answer is 4.",
+                "thinking": "2 + 2 is basic addition, giving 4.",
+            }).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: FakeResponse())
+    gen = OllamaBackend(model="m", think="merge").generate("p")
+    assert gen.text.startswith("2 + 2 is basic addition")
+    assert gen.text.endswith("The answer is 4.")
+
+
+def test_ollama_off_sends_think_false_and_skips_the_thinking_field(monkeypatch):
+    import json as _json
+
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return _json.dumps({"response": "4"}).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        captured["payload"] = _json.loads(req.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    gen = OllamaBackend(model="m", think="off").generate("p")
+    assert captured["payload"]["think"] is False
+    assert gen.text == "4"
+
+
 # ── Lazy imports ──────────────────────────────────────────────────────
 def test_grading_and_reporting_do_not_require_the_ml_stack():
     """The point of the module split: the grader must be testable without torch.

@@ -20,7 +20,8 @@ import urllib.request
 from dataclasses import dataclass, field
 
 __all__ = ["Generation", "Backend", "GeminiBackend", "OllamaBackend",
-           "MockBackend", "build_backend", "BACKEND_NAMES", "DEFAULT_MODELS"]
+           "MockBackend", "build_backend", "BACKEND_NAMES", "DEFAULT_MODELS",
+           "THINK_MODES"]
 
 DEFAULT_MODELS = {
     "gemini": "gemma-4-31b-it",
@@ -134,25 +135,46 @@ class GeminiBackend(Backend):
         return self._with_retries(call, self._transient)
 
 
+THINK_MODES = ("merge", "off")
+
+
 class OllamaBackend(Backend):
-    """Any model served by a local Ollama instance."""
+    """Any model served by a local Ollama instance.
+
+    Thinking-capable models (e.g. qwen3.5) return their chain-of-thought in a
+    separate ``thinking`` field, distinct from ``response`` which holds only
+    the terse final line. ``extract_steps`` (in answers.py) needs the actual
+    reasoning to produce meaningful PRM step scores, so ``think`` controls how
+    that field is handled:
+
+    - "merge" (default): fold ``thinking`` into the graded text, ahead of the
+      final response, so step scoring sees the real reasoning chain.
+    - "off": ask the model not to think at all (``think: false``), so
+      ``response`` already contains everything.
+    """
 
     name = "qwen"
 
     def __init__(self, model: str | None = None, host: str | None = None,
-                 timeout: int = 600, **kw):
+                 timeout: int = 600, think: str = "merge", **kw):
         super().__init__(model or DEFAULT_MODELS["qwen"], **kw)
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.timeout = timeout
+        if think not in THINK_MODES:
+            raise ValueError(f"think must be one of {THINK_MODES}, got {think!r}")
+        self.think = think
 
     def generate(self, prompt, max_tokens=2048, temperature=0.0, context=None):
         url = f"{self.host}/api/generate"
-        payload = json.dumps({
+        request = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": temperature, "num_predict": max_tokens},
-        }).encode("utf-8")
+        }
+        if self.think == "off":
+            request["think"] = False
+        payload = json.dumps(request).encode("utf-8")
 
         def call():
             req = urllib.request.Request(
@@ -160,7 +182,9 @@ class OllamaBackend(Backend):
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
-            text = body.get("response", "")
+            response = body.get("response", "")
+            thinking = body.get("thinking") or ""
+            text = f"{thinking}\n\n{response}" if thinking else response
             prompt_tokens = body.get("prompt_eval_count", 0)
             output_tokens = body.get("eval_count", 0)
             return Generation(

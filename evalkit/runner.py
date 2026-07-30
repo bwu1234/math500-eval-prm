@@ -59,6 +59,7 @@ class EvalConfig:
     max_tokens: int = 16384
     use_prm: bool = True
     resume: bool = True
+    think: str = "merge"
     verbose: bool = True
     out_dir: str = "."
     results_file: str = DEFAULT_RESULTS
@@ -85,6 +86,7 @@ class EvalConfig:
             "backend": self.backend, "model": self.model, "k": self.k,
             "temperature": self.resolved_temperature(),
             "max_tokens": self.max_tokens, "use_prm": self.use_prm,
+            "think": self.think if self.backend == "qwen" else None,
             "prompt": PROMPT_TEMPLATE,
         }, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
@@ -450,7 +452,9 @@ def run_eval(config: EvalConfig, problems: list[dict] | None = None,
         open(log_path, "w").close()
 
     log = RunLogger(log_path, verbose=config.verbose)
-    backend = backend or build_backend(config.backend, config.model, on_log=log)
+    backend_kwargs = {"think": config.think} if config.backend == "qwen" else {}
+    backend = backend or build_backend(config.backend, config.model, on_log=log,
+                                        **backend_kwargs)
     scorer = scorer if scorer is not None else build_scorer(config.use_prm, on_log=log)
 
     log(f"Model backend: {config.backend} ({backend.model})")

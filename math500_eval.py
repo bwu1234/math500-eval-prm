@@ -5,6 +5,7 @@ Examples
 --------
     python math500_eval.py -n 20                       # 20 questions via Gemini
     python math500_eval.py -n 20 -m qwen               # local Ollama model
+    python math500_eval.py -n 20 -m qwen --think off   # disable thinking mode
     python math500_eval.py -n 50 -k 5                  # self-consistency, 5 samples
     python math500_eval.py -n 20 --compare gemini,qwen # diff two backends
     python math500_eval.py -n 20 -m mock --no-prm      # smoke test, no GPU or API key
@@ -16,7 +17,7 @@ import glob
 import os
 import sys
 
-from evalkit.backends import BACKEND_NAMES
+from evalkit.backends import BACKEND_NAMES, THINK_MODES
 from evalkit.report import build_report, write_report
 from evalkit.runner import EvalConfig, run_comparison, run_eval, suffixed_path
 
@@ -74,6 +75,11 @@ def parse_args(argv=None):
                    help="Max output tokens per solution (default: 16384)")
     p.add_argument("--no-prm", action="store_true",
                    help="Skip Process Reward Model scoring (no GPU required)")
+    p.add_argument("--think", choices=THINK_MODES, default="merge",
+                   help="For thinking-capable Ollama models: 'merge' folds the "
+                        "model's separate thinking trace into the graded text "
+                        "(default), 'off' disables thinking so the response is "
+                        "used as-is. Ignored by other backends.")
     p.add_argument("--no-resume", action="store_true",
                    help="Ignore any checkpoint and start the run from scratch")
     p.add_argument("--compare", default=None, metavar="A,B",
@@ -105,6 +111,7 @@ def main(argv=None) -> int:
         max_tokens=args.max_tokens,
         use_prm=not args.no_prm,
         resume=not args.no_resume,
+        think=args.think,
         verbose=not args.quiet,
         out_dir=args.out_dir,
         # The runner archives the previous run's report alongside its log and
