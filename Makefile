@@ -13,7 +13,7 @@ test:
 	$(PYTHON) -m pytest tests/ -q
 
 smoke:
-	$(PYTHON) math500_eval.py -n 20 -m mock --no-prm --report --quiet
+	$(PYTHON) math500_eval.py -n 20 -m mock --no-prm --quiet
 
 audit:
 	$(PYTHON) scripts/audit_normaliser.py

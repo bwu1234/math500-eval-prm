@@ -459,11 +459,12 @@ def run_comparison(config: EvalConfig, backends: list[str],
     if problems is None:
         problems = load_problems(config.num_questions, config.question)
 
-    runs, summaries = {}, {}
+    runs, summaries, results_files = {}, {}, {}
     for name in backends:
         print(f"\n{'#' * 60}\n# backend: {name}\n{'#' * 60}", flush=True)
+        results_files[name] = f"eval_results_{name}.json"
         sub = EvalConfig(**{**asdict(config), "backend": name, "model": None,
-                            "results_file": f"eval_results_{name}.json",
+                            "results_file": results_files[name],
                             "log_file": f"eval_debug_{name}.log"})
         summary = run_eval(sub, problems=problems)
         runs[name] = summary["results"]
@@ -471,6 +472,10 @@ def run_comparison(config: EvalConfig, backends: list[str],
 
     comparison = compare_runs(runs)
     comparison["summaries"] = summaries
+    # Each backend writes its own results file; a comparison run never writes
+    # the default eval_results.json. Recording the paths keeps report building
+    # from silently falling back to a stale file left by an earlier run.
+    comparison["results_files"] = results_files
     comparison["timestamp"] = datetime.now().isoformat(timespec="seconds")
 
     path = config.path("eval_comparison.json")

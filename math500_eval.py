@@ -12,11 +12,46 @@ Examples
 """
 
 import argparse
+import glob
+import os
 import sys
 
 from evalkit.backends import BACKEND_NAMES
 from evalkit.report import build_report, write_report
 from evalkit.runner import EvalConfig, run_comparison, run_eval
+
+
+def emit_report(config, out_dir, path, results_file="eval_results.json") -> str | None:
+    """Build and write one report, downgrading any failure to a warning.
+
+    A run can be hours of GPU time; a bug in report rendering must not be the
+    thing that loses it. The results file is already on disk by this point.
+    """
+    try:
+        report = build_report(out_dir=out_dir, results_file=results_file)
+        written = write_report(report, config.path(path))
+        print(f"  Report:    {written}")
+        return written
+    except Exception as e:  # noqa: BLE001 -- the run itself already succeeded
+        print(f"warning: could not generate the report ({type(e).__name__}: {e})\n"
+              f"         results are intact in {os.path.join(out_dir, results_file)}; "
+              f"retry with --report-only", file=sys.stderr)
+        return None
+
+
+def _suffixed(path: str, name: str) -> str:
+    root, ext = os.path.splitext(path)
+    return f"{root}_{name}{ext or '.html'}"
+
+
+def emit_comparison_reports(config, out_dir, path, results_files: dict) -> None:
+    """One report per backend, each carrying the shared comparison section.
+
+    Building a single report here would mean picking one backend's results to
+    head the page while the comparison covers all of them.
+    """
+    for name, results_file in results_files.items():
+        emit_report(config, out_dir, _suffixed(path, name), results_file)
 
 
 def parse_args(argv=None):
@@ -48,9 +83,11 @@ def parse_args(argv=None):
     p.add_argument("--compare", default=None, metavar="A,B",
                    help="Run the same questions through several backends and "
                         "report where they diverge")
-    p.add_argument("--report", nargs="?", const="report.html", default=None,
-                   metavar="PATH", help="Write a self-contained HTML report "
-                                        "(default path: report.html)")
+    p.add_argument("--report", default="report.html", metavar="PATH",
+                   help="Where to write the HTML report, generated automatically "
+                        "after every run (default: report.html)")
+    p.add_argument("--no-report", action="store_true",
+                   help="Skip HTML report generation")
     p.add_argument("--report-only", action="store_true",
                    help="Rebuild the HTML report from existing results without "
                         "running the model")
@@ -83,12 +120,22 @@ def main(argv=None) -> int:
         print("warning: k>1 at temperature 0 produces k identical samples; "
               "self-consistency will be a no-op.", file=sys.stderr)
 
-    report_path = args.report or ("report.html" if args.report_only else None)
+    report_path = None if args.no_report else args.report
 
     if args.report_only:
-        report = build_report(out_dir=args.out_dir)
-        path = write_report(report, config.path(report_path))
-        print(f"Report written to: {path}")
+        # A comparison run writes per-backend results and no eval_results.json,
+        # so fall back to whatever this directory actually holds.
+        default = os.path.join(args.out_dir, "eval_results.json")
+        if os.path.exists(default):
+            return 0 if emit_report(config, args.out_dir, args.report) else 1
+        found = sorted(glob.glob(os.path.join(args.out_dir, "eval_results_*.json")))
+        if not found:
+            print(f"error: no results found in {args.out_dir}. Run an eval first.",
+                  file=sys.stderr)
+            return 2
+        emit_comparison_reports(config, args.out_dir, args.report,
+                                {os.path.basename(p)[len("eval_results_"):-len(".json")]:
+                                 os.path.basename(p) for p in found})
         return 0
 
     if args.compare:
@@ -100,14 +147,14 @@ def main(argv=None) -> int:
         if len(names) < 2:
             print("error: --compare needs at least two backends", file=sys.stderr)
             return 2
-        run_comparison(config, names)
+        comparison = run_comparison(config, names)
+        if report_path:
+            emit_comparison_reports(config, args.out_dir, report_path,
+                                    comparison["results_files"])
     else:
         run_eval(config)
-
-    if report_path:
-        report = build_report(out_dir=args.out_dir)
-        path = write_report(report, config.path(report_path))
-        print(f"  Report:    {path}")
+        if report_path:
+            emit_report(config, args.out_dir, report_path)
     return 0
 
 

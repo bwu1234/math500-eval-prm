@@ -8,10 +8,12 @@ anything.
 
 ```
 python math500_eval.py -n 100                        # 100 questions
-python math500_eval.py -n 100 -k 5 --report          # self-consistency + HTML report
+python math500_eval.py -n 100 -k 5                   # self-consistency, 5 samples
 python math500_eval.py -n 100 --compare gemini,qwen  # diff two backends
 python math500_eval.py -n 20 -m mock --no-prm        # runs anywhere, no GPU or API key
 ```
+
+Every run writes `report.html` automatically.
 
 ---
 
@@ -117,7 +119,7 @@ best-of-*n* result as "accuracy" would overstate the model.
 
 ## The report
 
-`--report` writes a self-contained HTML file — inline SVG charts, no
+Every run writes a self-contained HTML file — inline SVG charts, no
 dependencies, no external requests, no build step. Open it from disk, commit
 it, or attach it to a PR. It renders accuracy by difficulty and subject, a
 subject × difficulty heatmap, the PRM reliability curve and score
@@ -125,11 +127,21 @@ distributions, selection-strategy comparison, backend divergences, and a
 per-question drilldown where **each reasoning step is shaded by its PRM
 reward** — which localises where a solution went wrong.
 
-Rebuild a report from existing results without re-running the model:
-
 ```bash
-python math500_eval.py --report-only
+python math500_eval.py -n 100                    # writes report.html
+python math500_eval.py -n 100 --report out.html  # somewhere else
+python math500_eval.py -n 100 --no-report        # skip it
+python math500_eval.py --report-only             # rebuild, no model run
 ```
+
+`--compare` writes one report per backend (`report_gemini.html`,
+`report_qwen.html`), each carrying the shared comparison section — a
+comparison run produces no combined `eval_results.json`, so a single report
+would have to pick one backend's results to head the page.
+
+Report generation runs after the model work is finished and downgrades any
+failure to a warning, so a rendering bug can never cost you a completed run.
+`--report-only` rebuilds from the results already on disk.
 
 ---
 
@@ -144,7 +156,8 @@ python math500_eval.py --report-only
 | `--temperature` | default 0 for `k=1`, 0.7 for `k>1` |
 | `-q, --question` | rerun one question, merging it into existing results |
 | `--compare A,B` | run the same questions through several backends |
-| `--report [PATH]` | write the HTML report (default `report.html`) |
+| `--report PATH` | where to write the report (default `report.html`) |
+| `--no-report` | skip report generation |
 | `--report-only` | rebuild the report from existing results |
 | `--no-prm` | skip PRM scoring (no GPU needed) |
 | `--no-resume` | ignore any checkpoint and start fresh |
@@ -189,7 +202,7 @@ evalkit/
   runner.py            pipeline, checkpointing, aggregation
 scripts/
   audit_normaliser.py  reproduces the grader collision sweep
-tests/                 165 tests, ~0.6s, no GPU required
+tests/                 180 tests, ~1s, no GPU required
 ```
 
 The split is load-bearing: `answers`, `analysis` and `report` import no
