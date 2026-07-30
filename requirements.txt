@@ -1,0 +1,6 @@
+torch>=2.0.0
+transformers>=4.36.0
+datasets>=2.14.0
+sympy>=1.12
+bitsandbytes>=0.41.0
+google-genai>=0.3.0
