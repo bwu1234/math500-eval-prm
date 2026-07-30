@@ -8,6 +8,7 @@ false positive that silently inflates reported accuracy.
 
 Run from the repo root:  python scripts/audit_normaliser.py
 """
+import itertools
 import os
 import re
 import sys
@@ -17,7 +18,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datasets import load_dataset  # noqa: E402
 
-from evalkit.answers import are_equivalent, normalize_answer  # noqa: E402
+from evalkit.answers import (  # noqa: E402
+    _interval_from_inequality,
+    _strip_base,
+    _strip_units,
+    _strip_var_prefix,
+    are_equivalent,
+    final_answer_correct,
+    normalize_answer,
+)
 
 # ── the original implementation, kept verbatim for comparison ─────────
 LATEX_SYMBOLS = {
@@ -74,3 +83,38 @@ for label, fn in (("ORIGINAL", old_normalize_answer), ("NEW", normalize_answer))
     print(f"    FALSE POSITIVES        : {len(false_pos)}")
     for key, vs in false_pos[:12]:
         print(f"      {key!r}  <-  {vs}")
+
+
+# ── tier 3: presentation tolerance ────────────────────────────────────
+# The lenient tier forgives units, "x =" prefixes, numeral bases and root
+# order. That leniency is where new false positives would come from, so sweep
+# for it directly: bucket the golds by the core the tier compares, then grade
+# every within-bucket pair against each other. Distinct golds that grade equal
+# are answers to different questions the grader cannot tell apart.
+def presentation_core(s: str) -> str:
+    n = _strip_var_prefix(normalize_answer(s))
+    n = _interval_from_inequality(n) or n
+    core, _ = _strip_units(n)
+    core, _ = _strip_base(core)
+    return core
+
+
+buckets = defaultdict(set)
+for g in golds:
+    buckets[presentation_core(g)].add(g)
+
+pairs = [
+    (a, b)
+    for variants in buckets.values() if len(variants) > 1
+    for a, b in itertools.combinations(sorted(variants), 2)
+]
+equated = [(a, b) for a, b in pairs if final_answer_correct(a, b)]
+spurious = [(a, b) for a, b in equated if not are_equivalent(a, b)]
+
+print("\n=== NEW final_answer_correct (presentation tier) ===")
+print(f"  distinct golds sharing a comparison core: {len(pairs)} pairs")
+print(f"    graded equal               : {len(equated)}")
+print(f"    of those, not truly equal  : {len(spurious)}")
+for a, b in equated[:12]:
+    verdict = "value-equal" if are_equivalent(a, b) else "DECORATION ONLY"
+    print(f"      {a!r} <-> {b!r}  [{verdict}]")

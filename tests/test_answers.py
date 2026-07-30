@@ -137,6 +137,86 @@ def test_inequivalent_answers(pred, gold):
     assert not final_answer_correct(gold, pred), f"{pred!r} must not grade equal to {gold!r}"
 
 
+# ── Presentation tolerance ────────────────────────────────────────────
+# Every pair below is a real MATH-500 grading disagreement: the model's answer
+# was right and was scored wrong purely over how it was written. Sweeping the
+# 500-question run, 20 of 25 recorded failures were of this kind.
+@pytest.mark.parametrize("pred,gold", [
+    # a unit or label on one side only, in either direction
+    (r"12\text{ cm}", "12"),
+    (r"10\%", "10"),
+    (r"12^{\mathrm{th}} \text{ grade}", "12"),
+    ("270/7", r"\frac{270}7\text{ degrees}"),
+    ("864", r"864 \mbox{ inches}^2"),
+    ("5.4", r"5.4 \text{ cents}"),
+    # currency and digit grouping in the gold
+    ("36", r"\$36"),
+    ("18.90", r"\$18.90"),
+    ("32,348", r"\$32,\!348"),
+    ("10080", r"10,\!080"),
+    ("11111111100", r"11,\! 111,\! 111,\! 100"),
+    # the gold restates the variable
+    ("5", "x=5"),
+    ("[-2, 7]", r"x \in [-2,7]"),
+    # numeral base spelled out on one side only
+    ("2516", "2516_8"),
+    ("4210_5", "4210_{5}"),
+    # +- against the roots written out, in any order
+    (r"1+\sqrt{19}, 1-\sqrt{19}", r"1 \pm \sqrt{19}"),
+    (r"\{-2, 1+\sqrt{5}, 1-\sqrt{5}\}", r"\{1\pm\sqrt{5},-2\}"),
+    ("1, -2", "-2,1"),
+    # an interval asked for, an inequality given
+    (r"3 < \lambda \le 4", "(3,4]"),
+    (r"x \ge 5", r"[5,\infty)"),
+    # decimals inside a vector
+    (r"\begin{pmatrix} 0.2 \\ -3.6 \end{pmatrix}",
+     r"\begin{pmatrix} 1/5 \\ -18/5 \end{pmatrix}"),
+    # spacing inside a union of intervals whose endpoints look like grouped digits
+    (r"(2, 12) \cup (12, 102)", r"(2,12) \cup (12,102)"),
+])
+def test_presentation_differences_are_forgiven(pred, gold):
+    assert final_answer_correct(gold, pred), f"{pred!r} should grade equal to {gold!r}"
+
+
+@pytest.mark.parametrize("pred,gold", [
+    # Tolerance is one-sided: when both answers carry the decoration and it
+    # disagrees, they are different answers.
+    (r"12\text{ m}", r"12\text{ cm}"),
+    (r"5.4\text{ dollars}", r"5.4\text{ cents}"),
+    ("2516_9", "2516_8"),
+    # An interval's brackets carry meaning, and a set is not a tuple.
+    ("(3,4)", "(3,4]"),
+    ("[3,4]", "(3,4]"),
+    (r"\{1,2\}", "(1,2)"),
+    (r"x < 4", "(-oo,4]"),
+    # Extra roots are a wrong answer, not a formatting difference.
+    (r"3+2\sqrt{2}, 3-2\sqrt{2}, -3+2\sqrt{2}, -3-2\sqrt{2}", r"3 \pm 2 \sqrt{2}"),
+    (r"1 \pm \sqrt{19}", r"1+\sqrt{19}"),
+    # A percentage is not the same number as its decimal.
+    (r"10\%", "0.1"),
+])
+def test_presentation_tolerance_is_not_a_free_pass(pred, gold):
+    assert not final_answer_correct(gold, pred), f"{pred!r} must not grade equal to {gold!r}"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (r"\$36", "36"),
+    (r"10,\!080", "10080"),
+    (r"4210_{5}", "4210_5"),
+    (r"\{1,2\}", "{1,2}"),                      # set braces survive as braces
+    (r"\begin{pmatrix} 1/5 \\ -18/5 \end{pmatrix}", "(1/5,-18/5)"),
+    (r"1\pm\sqrt{5}", "1+-sqrt(5)"),            # regression: became "1*5"
+    # Digit grouping resolves against the LaTeX brackets: braces group, so this
+    # comma is a thousands separator...
+    (r"\frac{20,000}{\pi}", "20000/(pi)"),
+    # ...while parentheses delimit, so these commas are separators.
+    ("(1, 234)", "(1,234)"),
+    (r"(2,12) \cup (12,102)", "(2,12)*u(12,102)"),
+])
+def test_normalisation_of_previously_mangled_forms(raw, expected):
+    assert normalize_answer(raw) == expected
+
+
 def test_equivalence_is_symmetric():
     for a, b in [("0.5", "1/2"), (r"\frac{3}{6}", "0.5"), ("2", "2.00")]:
         assert are_equivalent(a, b) == are_equivalent(b, a)
