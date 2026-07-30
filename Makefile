@@ -1,11 +1,12 @@
 PYTHON ?= python
 
-.PHONY: help test smoke audit report clean
+.PHONY: help test smoke audit regrade report clean
 
 help:
 	@echo "test    Run the unit suite (no GPU, no API key, ~1s)"
 	@echo "smoke   Exercise the full pipeline with the mock backend"
 	@echo "audit   Sweep MATH-500 for answer-grading collisions"
+	@echo "regrade Re-grade a finished run against the current grader (dry run)"
 	@echo "report  Rebuild report.html from existing results"
 	@echo "clean   Remove run outputs and caches"
 
@@ -17,6 +18,9 @@ smoke:
 
 audit:
 	$(PYTHON) scripts/audit_normaliser.py
+
+regrade:
+	$(PYTHON) scripts/regrade.py
 
 report:
 	$(PYTHON) math500_eval.py --report-only
