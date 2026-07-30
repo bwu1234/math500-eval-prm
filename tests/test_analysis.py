@@ -132,6 +132,18 @@ def test_calibration_flags_a_chance_level_auc():
     assert cal["auc_beats_chance"] is False, "3 negatives cannot establish signal"
 
 
+def test_a_single_negative_cannot_confirm_signal():
+    """Regression: a strong model can leave one scored failure. The interval
+    then excludes 0.5 on a normal approximation with nothing behind it, and the
+    harness must report "cannot tell" rather than "beats chance"."""
+    rows = ([{"prm_score": 0.9, "answer_accuracy": True}] * 99
+            + [{"prm_score": 0.1, "answer_accuracy": False}])
+    cal = prm_calibration(rows)
+    assert cal["auc"] == 1.0
+    assert cal["auc_ci"][0] > 0.5, "precondition: the interval does exclude chance"
+    assert cal["auc_beats_chance"] is None, "1 negative cannot confirm signal"
+
+
 def test_perfect_separation_still_reports_a_finite_interval():
     """A zero-width interval would claim total certainty from a few points."""
     from evalkit.analysis import auc_confidence_interval

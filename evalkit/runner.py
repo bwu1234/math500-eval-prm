@@ -403,6 +403,9 @@ def _print_summary(summary: dict, log: RunLogger, results_path: str, log_path: s
         if cal.get("auc_beats_chance") is False:
             lines.append(f"    not distinguishable from chance "
                          f"({cal.get('n_incorrect')} incorrect to rank against)")
+        elif cal.get("auc_beats_chance") is None:
+            lines.append(f"    unvalidated: only {cal.get('n_incorrect')} incorrect "
+                         f"solution(s) to rank against")
     if summary.get("selection_accuracy") and summary.get("k", 1) > 1:
         lines.append("  Selection accuracy (k=%d):" % summary["k"])
         for strategy, value in summary["selection_accuracy"].items():

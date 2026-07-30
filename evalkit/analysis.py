@@ -173,6 +173,12 @@ def calibration_bins(scores: list[float], labels: list[bool],
     return bins
 
 
+# Below this many solutions in the smaller outcome class, the Hanley-McNeil
+# normal approximation is not trustworthy enough to support a positive claim
+# about the AUC -- however far the point estimate sits from 0.5.
+MIN_CLASS_SIZE_FOR_AUC_VERDICT = 10
+
+
 def prm_calibration(rows: list[dict], score_key: str = "prm_score",
                     correct_key: str = "answer_accuracy",
                     n_bins: int = 10) -> dict:
@@ -200,10 +206,23 @@ def prm_calibration(rows: list[dict], score_key: str = "prm_score",
     ) if total else None
 
     auc = roc_auc(scores, labels)
-    ci = auc_confidence_interval(auc, len(correct_scores), len(wrong_scores))
+    n_pos, n_neg = len(correct_scores), len(wrong_scores)
+    ci = auc_confidence_interval(auc, n_pos, n_neg)
     # An interval straddling 0.5 means the ranking is consistent with chance,
-    # however far the point estimate happens to sit from it.
-    informative = None if ci is None else not (ci[0] <= 0.5 <= ci[1])
+    # however far the point estimate happens to sit from it. The reverse does
+    # not follow: Hanley-McNeil is a normal approximation, and against a
+    # handful of negatives it produces an interval narrow enough to exclude 0.5
+    # while resting on almost no evidence. "Not distinguishable from chance" is
+    # always safe to report; "beats chance" needs both classes populated, so
+    # below the threshold the verdict is None -- cannot tell, not confirmed.
+    if ci is None:
+        informative = None
+    elif ci[0] <= 0.5 <= ci[1]:
+        informative = False
+    elif min(n_pos, n_neg) < MIN_CLASS_SIZE_FOR_AUC_VERDICT:
+        informative = None
+    else:
+        informative = True
 
     return {
         "n": total,

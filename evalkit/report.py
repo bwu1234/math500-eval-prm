@@ -311,6 +311,18 @@ def _prm_section(summary: dict, rows: list[dict]) -> str:
 
     if auc is None:
         verdict = "Only one outcome class present, so discrimination is undefined."
+    elif beats_chance is None:
+        # The interval excludes 0.5, but it rests on too few solutions in the
+        # smaller class for the approximation behind it to mean anything.
+        verdict = (
+            f"<strong>Too few incorrect solutions to judge.</strong> The AUC point "
+            f"estimate is {num(auc)} and the 95% interval "
+            f"[{num(ci[0], 2)}, {num(ci[1], 2)}] happens to exclude 0.5, but with only "
+            f"{n_wrong} scored incorrect solution(s) that interval is a normal "
+            f"approximation resting on almost no evidence. Treat the reward as "
+            f"unvalidated until a harder question set or a weaker model produces "
+            f"enough failures to rank against."
+        )
     elif beats_chance is False:
         # The interval, not the point estimate, decides. Reading 0.59 as a real
         # effect when the interval spans 0.5 is exactly the over-claim this
