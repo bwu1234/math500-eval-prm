@@ -26,34 +26,46 @@ locally works identically.</sub>
 
 ## Results: `gemma-4-31b-it` on the full MATH-500
 
-**95.0%** (475/500), 191,822 output tokens, 4 responses truncated at
+**99.0%** (495/500), 191,822 output tokens, 4 responses truncated at
 `MAX_TOKENS` and counted as parse failures rather than graded on a guess.
 
 | Level | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|
-| Accuracy | 98% | 99% | 97% | 95% | 90% |
+| Accuracy | 100% | 100% | 99% | 99% | 98% |
 
-Accuracy falls monotonically with difficulty, which is the sanity check you
-want; the weakest subject is Prealgebra (89%), not the ones that sound hardest.
+Accuracy falls with difficulty, which is the sanity check you want; the weakest
+subject is Prealgebra (96%), not the ones that sound hardest.
+
+<sub>The first pass over this run reported 95.0% (475/500). Filtering the 25
+failures showed 20 were the *grader's* fault, not the model's — an answer
+marked wrong for carrying a unit, a `\$`, an `x =`, or its roots in a different
+order. The grading tiers below were extended to absorb presentation
+differences, and the stored predictions re-graded with
+`python scripts/regrade.py`. Of the 5 remaining failures, 4 are empty responses
+and one is a genuine disagreement with the reference answer.</sub>
 
 ### Does the PRM signal actually hold up? Not at this sample size.
 
 | | |
 |---|---|
-| AUC (PRM score → correctness) | **0.593** |
-| 95% CI (Hanley-McNeil) | **[0.476, 0.709]** |
-| Mean PRM, correct / incorrect | 0.523 / 0.487 |
-| Solutions to rank | 475 correct vs **21** incorrect |
+| AUC (PRM score → correctness) | **0.826** |
+| 95% CI (Hanley-McNeil) | **[0.539, 1.000]** |
+| Mean PRM, correct / incorrect | 0.521 / 0.395 |
+| Solutions to rank | 495 correct vs **1** incorrect |
 
-The point estimate looks encouraging, and it would be easy to write it up as
-"the PRM predicts correctness". It doesn't support that. A model that gets 95%
-right leaves only 21 failures, and an AUC estimated against 21 negatives has a
-standard error near 0.06 — the interval straddles 0.5, so **this is not
-distinguishable from chance**.
+The point estimate looks strong, the interval excludes 0.5, and it would be
+easy to write this up as "the PRM predicts correctness". It doesn't support
+that at all: the entire negative class is **one solution**. Hanley-McNeil is a
+normal approximation, and at that sample size it produces a confident-looking
+interval resting on nothing, so the harness refuses the positive verdict and
+reports the reward as **unvalidated** rather than confirmed.
 
-That is the finding, and the harness reports it as such rather than printing
-the number alone. Establishing whether the reward is informative needs more
-failures: a weaker model, or the level-5 subset where accuracy drops to 90%.
+This is the more interesting failure mode of the two. An interval straddling
+0.5 is self-evidently weak evidence; an interval that *excludes* 0.5 on one
+negative example looks like a result. Establishing whether the reward is
+informative needs failures to rank against — a weaker model, or a harder
+question set. That threshold lives in
+`analysis.MIN_CLASS_SIZE_FOR_AUC_VERDICT`.
 
 ---
 
@@ -83,12 +95,13 @@ point-biserial correlation, a reliability curve, and the score distributions
 for correct vs incorrect solutions.
 
 Crucially it reports a **confidence interval on that AUC**, and the verdict is
-driven by the interval rather than the point estimate. When a strong model
-leaves only a handful of failures there is not enough evidence to rank
-anything, however far the point estimate happens to sit from 0.5 — see the
-result above, where 0.593 turns out to be indistinguishable from chance. An
-eval that quietly reported the bare number would have overstated its own
-central claim.
+driven by the interval and the size of the smaller outcome class rather than the
+point estimate. When a strong model leaves only a handful of failures there is
+not enough evidence to rank anything, however far the point estimate happens to
+sit from 0.5 — see the result above, where an AUC of 0.826 with an interval
+excluding chance is still reported as unvalidated, because it is measured
+against one incorrect solution. An eval that quietly reported the bare number
+would have overstated its own central claim.
 
 ---
 
@@ -111,7 +124,7 @@ of genuinely different gold answers onto shared normalised forms**:
 | `\frac{\sqrt{3}}{3}` and `33` | `33` |
 | `-\sqrt{3}` and `-3` | `-3` |
 
-Grading here is structure-preserving instead, and runs in two tiers:
+Grading here is structure-preserving instead, and runs in three tiers:
 
 1. **Canonical form** (`normalize_answer`) — a real LaTeX-to-ASCII conversion:
    balanced-brace `\frac{a}{b}` → `(a)/(b)` (handles nesting), `\sqrt{x}` →
@@ -120,12 +133,35 @@ Grading here is structure-preserving instead, and runs in two tiers:
 2. **Symbolic fallback** (`are_equivalent`) — numeric, rational, elementwise
    (for tuples and intervals), then sympy simplification, so `0.5`, `1/2` and
    `\frac{1}{2}` still grade equal.
+3. **Presentation tolerance** — the first two tiers compare *values*; this one
+   absorbs how an answer is written. A unit or label (`12\text{ cm}` vs `12`), a
+   `\$`, a restated variable (`x=5` vs `5`), a numeral base (`2516` vs
+   `2516_8`), `\pm` against the roots written out, root order, an inequality
+   where an interval was asked for. This tier is what the 20 misgraded answers
+   above needed.
 
-On the same sweep this produces **zero false positives**; the only remaining
-collisions are genuine equivalences like `90` and `90^\circ`. Reproduce it:
+Under-reporting accuracy is recoverable and over-reporting is not, so every
+rule in tier 3 is **one-sided**: a difference is forgiven only when one side
+omits the decoration entirely. Two answers that both carry it and disagree
+(`cm` vs `m`, base 8 vs base 9, `(3,4]` vs `(3,4)`, a set vs a coordinate pair)
+still grade wrong — as do extra roots, which are a wrong answer rather than a
+formatting difference.
+
+On the same sweep this produces **zero false positives** in tier 1, and across
+tier 3 exactly three pairs of distinct gold answers become indistinguishable —
+`5`/`x=5`, `15`/`15\mbox{ cm}^2`, and `40`/`40_9` — each of which requires the
+model to have produced the right value to begin with. Reproduce it:
 
 ```bash
 python scripts/audit_normaliser.py
+```
+
+Because grading is cheap and model output is not, a grader fix can be applied to
+a finished run instead of paying for it again:
+
+```bash
+python scripts/regrade.py            # show the diff
+python scripts/regrade.py --write --report
 ```
 
 Extraction is hardened too — `\boxed{...}` is read with a balanced-brace
@@ -272,7 +308,8 @@ evalkit/
   runner.py            pipeline, checkpointing, aggregation
 scripts/
   audit_normaliser.py  reproduces the grader collision sweep
-tests/                 202 tests, ~1s, no GPU required
+  regrade.py           re-grades a finished run against the current grader
+tests/                 244 tests, ~1s, no GPU required
 ```
 
 The split is load-bearing: `answers`, `analysis` and `report` import no
