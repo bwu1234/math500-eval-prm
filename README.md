@@ -24,6 +24,39 @@ locally works identically.</sub>
 
 ---
 
+## Results: `gemma-4-31b-it` on the full MATH-500
+
+**95.0%** (475/500), 191,822 output tokens, 4 responses truncated at
+`MAX_TOKENS` and counted as parse failures rather than graded on a guess.
+
+| Level | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Accuracy | 98% | 99% | 97% | 95% | 90% |
+
+Accuracy falls monotonically with difficulty, which is the sanity check you
+want; the weakest subject is Prealgebra (89%), not the ones that sound hardest.
+
+### Does the PRM signal actually hold up? Not at this sample size.
+
+| | |
+|---|---|
+| AUC (PRM score → correctness) | **0.593** |
+| 95% CI (Hanley-McNeil) | **[0.476, 0.709]** |
+| Mean PRM, correct / incorrect | 0.523 / 0.487 |
+| Solutions to rank | 475 correct vs **21** incorrect |
+
+The point estimate looks encouraging, and it would be easy to write it up as
+"the PRM predicts correctness". It doesn't support that. A model that gets 95%
+right leaves only 21 failures, and an AUC estimated against 21 negatives has a
+standard error near 0.06 — the interval straddles 0.5, so **this is not
+distinguishable from chance**.
+
+That is the finding, and the harness reports it as such rather than printing
+the number alone. Establishing whether the reward is informative needs more
+failures: a weaker model, or the level-5 subset where accuracy drops to 90%.
+
+---
+
 ## Why a process reward model
 
 The usual way to evaluate reasoning quality is to ask a large language model
@@ -47,8 +80,15 @@ off the final result — it is scoring the reasoning itself.
 on step scoring is only justified if the score predicts something, so every
 run reports the AUC of PRM score against final-answer correctness, the
 point-biserial correlation, a reliability curve, and the score distributions
-for correct vs incorrect solutions. An AUC near 0.5 means the reward is
-uninformative for that model and question set, and the report says so plainly.
+for correct vs incorrect solutions.
+
+Crucially it reports a **confidence interval on that AUC**, and the verdict is
+driven by the interval rather than the point estimate. When a strong model
+leaves only a handful of failures there is not enough evidence to rank
+anything, however far the point estimate happens to sit from 0.5 — see the
+result above, where 0.593 turns out to be indistinguishable from chance. An
+eval that quietly reported the bare number would have overstated its own
+central claim.
 
 ---
 
@@ -103,7 +143,7 @@ failures** and reported separately rather than being graded on a guess.
 | **Accuracy** | overall, and sliced by subject and difficulty level |
 | **Parse failure rate** | responses with no extractable structured answer |
 | **PRM score** | mean step reward, plus every individual step's score |
-| **PRM validity** | AUC, point-biserial *r*, reliability curve, ECE, class separation |
+| **PRM validity** | AUC **with a Hanley-McNeil confidence interval**, point-biserial *r*, reliability curve, ECE, class separation |
 | **Selection strategies** | single-shot vs majority vote vs PRM best-of-*n* vs PRM-weighted vote |
 | **Cost** | output tokens and wall-clock latency per question |
 
@@ -150,10 +190,8 @@ Report generation runs after the model work is finished and downgrades any
 failure to a warning, so a rendering bug can never cost you a completed run.
 `--report-only` rebuilds from the results already on disk.
 
-The committed `report.html` is a real run — `gemma-4-31b-it`, 10 questions,
-PRM scoring on. It is small enough that the PRM/correctness AUC is undefined
-(every answer happened to be correct, so there is only one outcome class), and
-the report says so rather than printing a number it cannot support.
+The committed `report.html` is the full 500-question `gemma-4-31b-it` run
+described above.
 
 ### Nothing is overwritten
 
@@ -234,7 +272,7 @@ evalkit/
   runner.py            pipeline, checkpointing, aggregation
 scripts/
   audit_normaliser.py  reproduces the grader collision sweep
-tests/                 191 tests, ~1s, no GPU required
+tests/                 202 tests, ~1s, no GPU required
 ```
 
 The split is load-bearing: `answers`, `analysis` and `report` import no

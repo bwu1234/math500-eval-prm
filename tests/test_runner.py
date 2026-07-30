@@ -242,6 +242,31 @@ def test_aggregate_counts_parse_failures(tmp_path):
     assert summary["accuracy"] == pytest.approx(1 / 3)
 
 
+def test_aggregate_survives_null_token_counts(tmp_path):
+    """Regression: a 500-question run crashed here at the final step because
+    one truncated response recorded eval_tokens as None. Results files and
+    checkpoints written before the backend fix still contain those nulls, so
+    aggregation has to tolerate them rather than assume clean input."""
+    rows = [
+        {"answer_accuracy": True, "parse_matched": True, "predicted": "1",
+         "prm_score": 0.8, "eval_tokens": 100},
+        {"answer_accuracy": False, "parse_matched": False, "predicted": "",
+         "prm_score": None, "eval_tokens": None},
+    ]
+    summary = aggregate(rows, make_config(tmp_path), "m")
+    assert summary["total_output_tokens"] == 100
+    assert summary["empty_responses"] == 1
+
+
+def test_aggregate_counts_empty_responses(tmp_path):
+    rows = [
+        {"answer_accuracy": True, "parse_matched": True, "predicted": "5", "eval_tokens": 1},
+        {"answer_accuracy": False, "parse_matched": False, "predicted": "", "eval_tokens": 0},
+        {"answer_accuracy": False, "parse_matched": False, "predicted": "   ", "eval_tokens": 0},
+    ]
+    assert aggregate(rows, make_config(tmp_path), "m")["empty_responses"] == 2
+
+
 def test_aggregate_rejects_empty(tmp_path):
     with pytest.raises(ValueError):
         aggregate([], make_config(tmp_path), "m")

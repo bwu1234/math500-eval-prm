@@ -315,7 +315,12 @@ def aggregate(results: list[dict], config: EvalConfig, model_name: str,
         "model": model_name,
         "prm_enabled": config.use_prm,
         "synthetic": synthetic,
-        "total_output_tokens": sum(r.get("eval_tokens", 0) for r in results),
+        # `or 0` rather than a .get default: a truncated response records the
+        # key with an explicit None, which a default would not catch. Results
+        # files and checkpoints written before this was fixed still contain
+        # those nulls, so this stays defensive rather than trusting the input.
+        "total_output_tokens": sum((r.get("eval_tokens") or 0) for r in results),
+        "empty_responses": sum(1 for r in results if not (r.get("predicted") or "").strip()),
         "duration_s": round(duration, 1) if duration is not None else None,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "results": results,
@@ -392,8 +397,12 @@ def _print_summary(summary: dict, log: RunLogger, results_path: str, log_path: s
     ]
     cal = summary.get("prm_calibration") or {}
     if cal.get("auc") is not None:
-        lines.append(f"  PRM->correct AUC: {cal['auc']:.3f} "
-                     f"(separation {cal['separation']:+.3f})")
+        ci = cal.get("auc_ci")
+        span = f" 95% CI [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else ""
+        lines.append(f"  PRM->correct AUC: {cal['auc']:.3f}{span}")
+        if cal.get("auc_beats_chance") is False:
+            lines.append(f"    not distinguishable from chance "
+                         f"({cal.get('n_incorrect')} incorrect to rank against)")
     if summary.get("selection_accuracy") and summary.get("k", 1) > 1:
         lines.append("  Selection accuracy (k=%d):" % summary["k"])
         for strategy, value in summary["selection_accuracy"].items():

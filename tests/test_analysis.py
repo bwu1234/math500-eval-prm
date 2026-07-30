@@ -99,6 +99,55 @@ def test_calibration_clamps_out_of_range_scores():
     assert bins[0]["count"] == 1 and bins[-1]["count"] == 1
 
 
+def test_auc_ci_widens_as_the_minority_class_shrinks():
+    """The reason the interval exists: 21 failures cannot pin down an AUC."""
+    from evalkit.analysis import auc_confidence_interval
+    wide = auc_confidence_interval(0.593, n_pos=475, n_neg=21)
+    narrow = auc_confidence_interval(0.593, n_pos=475, n_neg=475)
+    assert (wide[1] - wide[0]) > (narrow[1] - narrow[0])
+    assert wide[0] <= 0.5 <= wide[1], "must not claim signal from 21 negatives"
+
+
+def test_auc_ci_is_clamped_to_valid_range():
+    from evalkit.analysis import auc_confidence_interval
+    lo, hi = auc_confidence_interval(0.99, n_pos=5, n_neg=5)
+    assert 0.0 <= lo <= hi <= 1.0
+
+
+def test_auc_ci_undefined_without_both_classes():
+    from evalkit.analysis import auc_confidence_interval
+    assert auc_confidence_interval(None, 5, 5) is None
+    assert auc_confidence_interval(0.8, 5, 0) is None
+
+
+def test_calibration_flags_a_chance_level_auc():
+    """The real case this exists for: a point estimate above 0.5 that a tiny
+    minority class cannot actually support."""
+    rows = ([{"prm_score": 0.55, "answer_accuracy": True}] * 60
+            + [{"prm_score": 0.60, "answer_accuracy": True}] * 40
+            + [{"prm_score": 0.50, "answer_accuracy": False}] * 2
+            + [{"prm_score": 0.65, "answer_accuracy": False}] * 1)
+    cal = prm_calibration(rows)
+    assert cal["auc"] > 0.5
+    assert cal["auc_beats_chance"] is False, "3 negatives cannot establish signal"
+
+
+def test_perfect_separation_still_reports_a_finite_interval():
+    """A zero-width interval would claim total certainty from a few points."""
+    from evalkit.analysis import auc_confidence_interval
+    lo, hi = auc_confidence_interval(1.0, n_pos=100, n_neg=2)
+    assert hi - lo > 0, "Hanley-McNeil variance vanishes at AUC=1 without a correction"
+    assert 0.0 <= lo <= 1.0 and 0.0 <= hi <= 1.0
+
+
+def test_calibration_confirms_signal_when_the_evidence_supports_it():
+    rows = ([{"prm_score": 0.9, "answer_accuracy": True}] * 60
+            + [{"prm_score": 0.1, "answer_accuracy": False}] * 60)
+    cal = prm_calibration(rows)
+    assert cal["auc"] == 1.0
+    assert cal["auc_beats_chance"] is True
+
+
 def test_prm_calibration_separation():
     rows = [
         {"prm_score": 0.9, "answer_accuracy": True},

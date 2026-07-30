@@ -7,6 +7,7 @@ import pytest
 
 from evalkit.backends import (
     Backend,
+    GeminiBackend,
     Generation,
     MockBackend,
     OllamaBackend,
@@ -62,6 +63,50 @@ def test_mock_hits_its_target_accuracy():
         gen = m.generate(f"problem {i}", context={"answer": str(i)})
         hits += extract_final_answer(gen.text)[0] == str(i)
     assert 0.5 < hits / n < 0.7
+
+
+def test_null_token_counts_become_zero():
+    """Regression: Gemini reports candidates_token_count=None when a response
+    is truncated at MAX_TOKENS having emitted no text. Left as None it
+    propagates into the results file and blows up aggregation at the very end
+    of a run -- after every question has been paid for."""
+    gen = Generation(text="", prompt_tokens=None, output_tokens=None, total_tokens=None)
+    assert (gen.prompt_tokens, gen.output_tokens, gen.total_tokens) == (0, 0, 0)
+    assert gen.prompt_tokens + gen.output_tokens == 0  # must be summable
+
+
+def test_real_token_counts_are_preserved():
+    gen = Generation(text="hi", prompt_tokens=7, output_tokens=3, total_tokens=10)
+    assert (gen.prompt_tokens, gen.output_tokens, gen.total_tokens) == (7, 3, 10)
+
+
+def test_gemini_truncated_response_yields_summable_tokens(monkeypatch):
+    """End-to-end shape of the MAX_TOKENS case, through the real backend."""
+    class Usage:
+        prompt_token_count = 391
+        candidates_token_count = None   # what Gemini actually sends
+        total_token_count = 16772
+
+    class Candidate:
+        finish_reason = "FinishReason.MAX_TOKENS"
+        finish_message = None
+
+    class Resp:
+        text = ""
+        usage_metadata = Usage()
+        candidates = [Candidate()]
+
+    b = GeminiBackend.__new__(GeminiBackend)   # bypass SDK/client construction
+    Backend.__init__(b, model="gemma-4-31b-it")
+    b._types = type("T", (), {"GenerateContentConfig": lambda **kw: None})
+    b._transient = ()
+    b._client = type("C", (), {"models": type("M", (), {
+        "generate_content": staticmethod(lambda **kw: Resp())})()})()
+
+    gen = b.generate("p")
+    assert gen.output_tokens == 0
+    assert "MAX_TOKENS" in gen.warning
+    assert sum([gen.output_tokens, gen.prompt_tokens]) == 391
 
 
 def test_build_backend_rejects_unknown_name():

@@ -23,6 +23,7 @@ from .answers import are_equivalent
 __all__ = [
     "compute_group_accuracy",
     "roc_auc",
+    "auc_confidence_interval",
     "pearson",
     "calibration_bins",
     "prm_calibration",
@@ -104,6 +105,34 @@ def roc_auc(scores: list[float], labels: list[bool]) -> float | None:
     return (rank_sum - pos * (pos + 1) / 2) / (pos * neg)
 
 
+def auc_confidence_interval(auc: float | None, n_pos: int, n_neg: int,
+                            z: float = 1.96) -> tuple[float, float] | None:
+    """Hanley-McNeil 95% confidence interval for an AUC.
+
+    Without this an AUC is easy to over-read. A model that answers 475 of 500
+    questions correctly leaves only 25 failures, and an AUC estimated against
+    25 negatives has a standard error near 0.06 -- so 0.59 and 0.50 are not
+    meaningfully different. The interval is what distinguishes "the reward
+    predicts correctness" from "we cannot tell yet".
+    """
+    if auc is None or n_pos < 1 or n_neg < 1:
+        return None
+    # At a perfectly separating AUC of 0 or 1 the Hanley-McNeil variance
+    # collapses to exactly zero, which would report a zero-width interval --
+    # infinite confidence from possibly a handful of points. Pull the estimate
+    # off the boundary by half a pair (a continuity correction) so the width
+    # still reflects how few pairs there are.
+    pairs = n_pos * n_neg
+    a = min(max(auc, 0.5 / pairs), 1 - 0.5 / pairs)
+    q1 = a / (2 - a)
+    q2 = 2 * a * a / (1 + a)
+    var = (a * (1 - a)
+           + (n_pos - 1) * (q1 - a * a)
+           + (n_neg - 1) * (q2 - a * a)) / pairs
+    se = math.sqrt(max(var, 0.0))
+    return (max(0.0, auc - z * se), min(1.0, auc + z * se))
+
+
 def pearson(xs: list[float], ys: list[float]) -> float | None:
     """Pearson correlation. With a boolean ``ys`` this is the point-biserial
     correlation between PRM score and correctness."""
@@ -170,9 +199,19 @@ def prm_calibration(rows: list[dict], score_key: str = "prm_score",
         for b in bins if b["count"]
     ) if total else None
 
+    auc = roc_auc(scores, labels)
+    ci = auc_confidence_interval(auc, len(correct_scores), len(wrong_scores))
+    # An interval straddling 0.5 means the ranking is consistent with chance,
+    # however far the point estimate happens to sit from it.
+    informative = None if ci is None else not (ci[0] <= 0.5 <= ci[1])
+
     return {
         "n": total,
-        "auc": roc_auc(scores, labels),
+        "n_correct": len(correct_scores),
+        "n_incorrect": len(wrong_scores),
+        "auc": auc,
+        "auc_ci": list(ci) if ci else None,
+        "auc_beats_chance": informative,
         "point_biserial_r": pearson(scores, [float(l) for l in labels]),
         "mean_prm_correct": mean_correct,
         "mean_prm_incorrect": mean_wrong,

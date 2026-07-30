@@ -252,7 +252,11 @@ def build_report(out_dir: str = ".", results_file: str = "eval_results.json",
 
     # Backfill anything a results file written by an older version lacks, so
     # archived runs stay reportable instead of rendering as empty panels.
-    if summary.get("prm_calibration") is None:
+    # Recompute when the stored block predates a field, not just when it is
+    # missing entirely: a calibration without auc_ci would otherwise render the
+    # significance verdict from a point estimate alone.
+    stored_cal = summary.get("prm_calibration")
+    if stored_cal is None or "auc_ci" not in stored_cal:
         summary["prm_calibration"] = prm_calibration(rows)
     if summary.get("correct") is None:
         summary["correct"] = sum(1 for r in rows if r.get("answer_accuracy"))
@@ -301,21 +305,38 @@ def _prm_section(summary: dict, rows: list[dict]) -> str:
              if r.get("prm_score") is not None and not r.get("answer_accuracy")]
 
     auc = cal.get("auc")
+    ci = cal.get("auc_ci")
+    beats_chance = cal.get("auc_beats_chance")
+    n_wrong = cal.get("n_incorrect")
+
     if auc is None:
         verdict = "Only one outcome class present, so discrimination is undefined."
+    elif beats_chance is False:
+        # The interval, not the point estimate, decides. Reading 0.59 as a real
+        # effect when the interval spans 0.5 is exactly the over-claim this
+        # analysis exists to prevent.
+        verdict = (
+            f"<strong>Not distinguishable from chance at this sample size.</strong> "
+            f"The AUC point estimate is {num(auc)}, but with only {n_wrong} incorrect "
+            f"solution(s) to rank against, the 95% interval "
+            f"[{num(ci[0], 2)}, {num(ci[1], 2)}] straddles 0.5. More failures &mdash; "
+            f"a harder question set or a weaker model &mdash; are needed before this "
+            f"reward can be called informative."
+        )
     elif auc >= 0.7:
-        verdict = ("The PRM separates correct from incorrect solutions well "
-                   "enough to be useful for reranking.")
-    elif auc >= 0.58:
-        verdict = ("The PRM carries a weak but real signal; best-of-n reranking "
-                   "may help marginally.")
+        verdict = ("The PRM separates correct from incorrect solutions well enough "
+                   "to be useful for reranking, and the interval excludes chance.")
+    elif auc > 0.5:
+        verdict = ("The PRM carries a weak but statistically real signal; best-of-n "
+                   "reranking may help marginally.")
     else:
-        verdict = ("The PRM barely beats chance at this sample size &mdash; the "
-                   "average step reward is close to uninformative about final "
-                   "correctness here.")
+        verdict = ("The PRM ranks incorrect solutions <em>above</em> correct ones "
+                   "more often than not &mdash; worse than chance.")
 
     stats = [
         ("AUC", num(auc), "P(correct scored above incorrect)"),
+        ("AUC 95% CI", f"[{num(ci[0], 2)}, {num(ci[1], 2)}]" if ci else "n/a",
+         f"{cal.get('n_correct', 0)} correct vs {n_wrong} incorrect"),
         ("Point-biserial r", num(cal.get("point_biserial_r")), "score vs correctness"),
         ("Mean PRM | correct", num(cal.get("mean_prm_correct")), ""),
         ("Mean PRM | incorrect", num(cal.get("mean_prm_incorrect")), ""),

@@ -39,6 +39,16 @@ class Generation:
     total_tokens: int = 0
     warning: str | None = None
 
+    def __post_init__(self):
+        # Providers report a missing count as an explicit null rather than
+        # omitting the field: Gemini returns candidates_token_count=None when a
+        # response is truncated at MAX_TOKENS having emitted no text. Coercing
+        # here keeps every downstream consumer working with plain ints, instead
+        # of each one having to guard separately.
+        self.prompt_tokens = int(self.prompt_tokens or 0)
+        self.output_tokens = int(self.output_tokens or 0)
+        self.total_tokens = int(self.total_tokens or 0)
+
 
 class Backend:
     """Base class holding the shared retry loop."""
