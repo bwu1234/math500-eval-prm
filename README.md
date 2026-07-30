@@ -143,6 +143,26 @@ Report generation runs after the model work is finished and downgrades any
 failure to a warning, so a rendering bug can never cost you a completed run.
 `--report-only` rebuilds from the results already on disk.
 
+### Nothing is overwritten
+
+Scoring a new model archives the previous run rather than replacing it. Its
+log, results and report move into `logs/` under a **shared timestamp**, so the
+three files belonging to one run stay correlated:
+
+```
+report.html                         <- the run you just did
+eval_results.json
+logs/report_20260730_001752.html    <- the run before it
+logs/eval_results_20260730_001752.json
+logs/eval_debug_20260730_001752.log
+```
+
+A comparison run archives each backend separately
+(`logs/report_qwen_<stamp>.html`). The previous report is archived even under
+`--no-report`, so a stale report can never sit next to the results of a newer
+run. Rebuild any archived report with
+`python math500_eval.py --report-only --out-dir <dir>`.
+
 ---
 
 ## Usage
@@ -202,7 +222,7 @@ evalkit/
   runner.py            pipeline, checkpointing, aggregation
 scripts/
   audit_normaliser.py  reproduces the grader collision sweep
-tests/                 180 tests, ~1s, no GPU required
+tests/                 191 tests, ~1s, no GPU required
 ```
 
 The split is load-bearing: `answers`, `analysis` and `report` import no

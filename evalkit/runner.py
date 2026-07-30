@@ -27,11 +27,18 @@ from .backends import build_backend
 from .prm import build_scorer
 
 __all__ = ["EvalConfig", "RunLogger", "run_eval", "run_comparison",
-           "load_problems", "PROMPT_TEMPLATE"]
+           "load_problems", "suffixed_path", "PROMPT_TEMPLATE"]
+
+
+def suffixed_path(path: str, name: str) -> str:
+    """``report.html`` + ``qwen`` -> ``report_qwen.html``."""
+    root, ext = os.path.splitext(path)
+    return f"{root}_{name}{ext or '.html'}"
 
 DATASET = "HuggingFaceH4/MATH-500"
 DEFAULT_RESULTS = "eval_results.json"
 DEFAULT_LOG = "eval_debug.log"
+DEFAULT_REPORT = "report.html"
 LOG_DIR = "logs"
 CHECKPOINT = ".eval_checkpoint.jsonl"
 
@@ -56,6 +63,7 @@ class EvalConfig:
     out_dir: str = "."
     results_file: str = DEFAULT_RESULTS
     log_file: str = DEFAULT_LOG
+    report_file: str = DEFAULT_REPORT
 
     def resolved_temperature(self) -> float:
         """Sampling k>1 solutions at temperature 0 yields k identical
@@ -314,17 +322,45 @@ def aggregate(results: list[dict], config: EvalConfig, model_name: str,
     }
 
 
-def _archive_previous(config: EvalConfig, log_path: str, results_path: str) -> None:
-    """Move the previous run aside rather than overwriting it."""
-    if not (os.path.exists(log_path) or os.path.exists(results_path)):
-        return
+def _archive_destination(log_dir: str, path: str, stamp: str) -> str:
+    """``report.html`` -> ``logs/report_<stamp>.html``.
+
+    Derived from the actual filename rather than a hardcoded prefix, so a
+    comparison run archives ``eval_results_qwen.json`` as
+    ``eval_results_qwen_<stamp>.json`` instead of flattening every backend
+    onto the same name.
+    """
+    stem, ext = os.path.splitext(os.path.basename(path))
+    target = os.path.join(log_dir, f"{stem}_{stamp}{ext}")
+    if not os.path.exists(target):
+        return target
+    # Two runs inside the same second would otherwise silently clobber an
+    # archive, and these are the only copies.
+    for n in range(2, 1000):
+        candidate = os.path.join(log_dir, f"{stem}_{stamp}_{n}{ext}")
+        if not os.path.exists(candidate):
+            return candidate
+    return target
+
+
+def _archive_previous(config: EvalConfig, *paths: str) -> list[str]:
+    """Move the previous run's artifacts aside rather than overwriting them.
+
+    The log, results and report of a single run share one timestamp, so the
+    three files belonging to a given run stay correlated in ``logs/``.
+    """
+    present = [p for p in paths if p and os.path.exists(p)]
+    if not present:
+        return []
     log_dir = config.path(LOG_DIR)
     os.makedirs(log_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if os.path.exists(log_path):
-        shutil.move(log_path, os.path.join(log_dir, f"eval_debug_{stamp}.log"))
-    if os.path.exists(results_path):
-        shutil.move(results_path, os.path.join(log_dir, f"eval_results_{stamp}.json"))
+    archived = []
+    for path in present:
+        target = _archive_destination(log_dir, path, stamp)
+        shutil.move(path, target)
+        archived.append(target)
+    return archived
 
 
 def _merge_single_question(config: EvalConfig, results_path: str,
@@ -394,7 +430,11 @@ def run_eval(config: EvalConfig, problems: list[dict] | None = None,
 
     os.makedirs(config.out_dir, exist_ok=True)
     if not single:
-        _archive_previous(config, log_path, results_path)
+        # The report is archived alongside the run it describes, and always --
+        # even with --no-report -- so a stale report can never sit next to the
+        # results of a newer run.
+        _archive_previous(config, log_path, results_path,
+                          config.path(config.report_file))
         open(log_path, "w").close()
 
     log = RunLogger(log_path, verbose=config.verbose)
@@ -459,13 +499,15 @@ def run_comparison(config: EvalConfig, backends: list[str],
     if problems is None:
         problems = load_problems(config.num_questions, config.question)
 
-    runs, summaries, results_files = {}, {}, {}
+    runs, summaries, results_files, report_files = {}, {}, {}, {}
     for name in backends:
         print(f"\n{'#' * 60}\n# backend: {name}\n{'#' * 60}", flush=True)
         results_files[name] = f"eval_results_{name}.json"
+        report_files[name] = suffixed_path(config.report_file, name)
         sub = EvalConfig(**{**asdict(config), "backend": name, "model": None,
                             "results_file": results_files[name],
-                            "log_file": f"eval_debug_{name}.log"})
+                            "log_file": f"eval_debug_{name}.log",
+                            "report_file": report_files[name]})
         summary = run_eval(sub, problems=problems)
         runs[name] = summary["results"]
         summaries[name] = {k: v for k, v in summary.items() if k != "results"}
@@ -476,6 +518,7 @@ def run_comparison(config: EvalConfig, backends: list[str],
     # the default eval_results.json. Recording the paths keeps report building
     # from silently falling back to a stale file left by an earlier run.
     comparison["results_files"] = results_files
+    comparison["report_files"] = report_files
     comparison["timestamp"] = datetime.now().isoformat(timespec="seconds")
 
     path = config.path("eval_comparison.json")

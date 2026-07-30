@@ -65,6 +65,86 @@ def test_single_question_rerun_refreshes_the_whole_report(tmp_path):
     assert html.count("<details") == 6
 
 
+# ── Archiving ─────────────────────────────────────────────────────────
+def test_previous_report_is_archived_not_overwritten(tmp_path):
+    """Scoring a new model must not destroy the previous model's report."""
+    run(tmp_path, "-n", "4")
+    first = (tmp_path / "report.html").read_text()
+
+    run(tmp_path, "-n", "6")
+    archived = list((tmp_path / "logs").glob("report_*.html"))
+    assert len(archived) == 1
+    assert archived[0].read_text() == first
+    assert (tmp_path / "report.html").read_text() != first
+
+
+def test_each_run_leaves_one_archived_report(tmp_path):
+    for n in ("2", "3", "4", "5"):
+        run(tmp_path, "-n", n)
+    # Four runs -> three archived predecessors plus the current report.
+    assert len(list((tmp_path / "logs").glob("report_*.html"))) == 3
+    assert (tmp_path / "report.html").exists()
+
+
+def test_a_run_archives_its_predecessor_as_one_correlated_set(tmp_path):
+    """Log, results and report of a given run share a timestamp so they can
+    be matched up after the fact."""
+    run(tmp_path, "-n", "4")
+    run(tmp_path, "-n", "4")
+    logs = tmp_path / "logs"
+
+    def stamp(pattern, prefix, suffix):
+        (path,) = list(logs.glob(pattern))
+        return path.name[len(prefix):-len(suffix)]
+
+    assert (stamp("report_*.html", "report_", ".html")
+            == stamp("eval_results_*.json", "eval_results_", ".json")
+            == stamp("eval_debug_*.log", "eval_debug_", ".log"))
+
+
+def test_stale_report_is_archived_even_with_no_report(tmp_path):
+    """Otherwise --no-report would leave the old report sitting next to the
+    results of a newer, different run."""
+    run(tmp_path, "-n", "4")
+    assert (tmp_path / "report.html").exists()
+
+    run(tmp_path, "-n", "6", "--no-report")
+    assert not (tmp_path / "report.html").exists()
+    assert len(list((tmp_path / "logs").glob("report_*.html"))) == 1
+
+
+def test_custom_report_name_is_archived_under_its_own_name(tmp_path):
+    run(tmp_path, "-n", "4", "--report", "scorecard.html")
+    run(tmp_path, "-n", "4", "--report", "scorecard.html")
+    assert list((tmp_path / "logs").glob("scorecard_*.html"))
+
+
+def test_single_question_rerun_does_not_archive(tmp_path):
+    """A rerun merges into the current run; it is not a new run."""
+    run(tmp_path, "-n", "6")
+    run(tmp_path, "-q", "2")
+    assert not list((tmp_path / "logs").glob("report_*.html"))
+
+
+def test_compare_archives_each_backend_separately(tmp_path, monkeypatch):
+    """The previous archiver flattened every backend onto one name, losing
+    which results belonged to which model."""
+    import evalkit.runner as runner
+    from evalkit.backends import MockBackend
+    monkeypatch.setattr(
+        runner, "build_backend",
+        lambda name, model=None, on_log=None, **kw: MockBackend(seed=len(name), on_log=on_log))
+
+    run(tmp_path, "-n", "4", "--compare", "gemini,qwen")
+    run(tmp_path, "-n", "4", "--compare", "gemini,qwen")
+
+    logs = tmp_path / "logs"
+    assert list(logs.glob("report_gemini_*.html"))
+    assert list(logs.glob("report_qwen_*.html"))
+    assert list(logs.glob("eval_results_gemini_*.json"))
+    assert list(logs.glob("eval_results_qwen_*.json"))
+
+
 # ── Report failure must not sink a completed run ──────────────────────
 def test_report_failure_is_a_warning_not_a_crash(tmp_path, monkeypatch, capsys):
     """The expensive part already finished; losing it to a rendering bug would

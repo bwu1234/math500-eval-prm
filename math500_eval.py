@@ -18,7 +18,7 @@ import sys
 
 from evalkit.backends import BACKEND_NAMES
 from evalkit.report import build_report, write_report
-from evalkit.runner import EvalConfig, run_comparison, run_eval
+from evalkit.runner import EvalConfig, run_comparison, run_eval, suffixed_path
 
 
 def emit_report(config, out_dir, path, results_file="eval_results.json") -> str | None:
@@ -39,19 +39,15 @@ def emit_report(config, out_dir, path, results_file="eval_results.json") -> str 
         return None
 
 
-def _suffixed(path: str, name: str) -> str:
-    root, ext = os.path.splitext(path)
-    return f"{root}_{name}{ext or '.html'}"
-
-
-def emit_comparison_reports(config, out_dir, path, results_files: dict) -> None:
+def emit_comparison_reports(config, out_dir, results_files: dict,
+                            report_files: dict) -> None:
     """One report per backend, each carrying the shared comparison section.
 
     Building a single report here would mean picking one backend's results to
     head the page while the comparison covers all of them.
     """
     for name, results_file in results_files.items():
-        emit_report(config, out_dir, _suffixed(path, name), results_file)
+        emit_report(config, out_dir, report_files[name], results_file)
 
 
 def parse_args(argv=None):
@@ -111,6 +107,9 @@ def main(argv=None) -> int:
         resume=not args.no_resume,
         verbose=not args.quiet,
         out_dir=args.out_dir,
+        # The runner archives the previous run's report alongside its log and
+        # results, so it has to know where the report lives.
+        report_file=args.report,
     )
 
     if args.k < 1:
@@ -133,9 +132,12 @@ def main(argv=None) -> int:
             print(f"error: no results found in {args.out_dir}. Run an eval first.",
                   file=sys.stderr)
             return 2
-        emit_comparison_reports(config, args.out_dir, args.report,
-                                {os.path.basename(p)[len("eval_results_"):-len(".json")]:
-                                 os.path.basename(p) for p in found})
+        names = [os.path.basename(p)[len("eval_results_"):-len(".json")] for p in found]
+        emit_comparison_reports(
+            config, args.out_dir,
+            {n: os.path.basename(p) for n, p in zip(names, found)},
+            {n: suffixed_path(args.report, n) for n in names},
+        )
         return 0
 
     if args.compare:
@@ -149,8 +151,9 @@ def main(argv=None) -> int:
             return 2
         comparison = run_comparison(config, names)
         if report_path:
-            emit_comparison_reports(config, args.out_dir, report_path,
-                                    comparison["results_files"])
+            emit_comparison_reports(config, args.out_dir,
+                                    comparison["results_files"],
+                                    comparison["report_files"])
     else:
         run_eval(config)
         if report_path:

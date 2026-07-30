@@ -145,6 +145,47 @@ def test_missing_checkpoint_is_not_an_error(tmp_path):
     assert load_checkpoint(str(tmp_path / "nope.jsonl"), "abc") == {}
 
 
+# ── Archiving ─────────────────────────────────────────────────────────
+def test_archive_name_derives_from_the_real_filename():
+    from evalkit.runner import _archive_destination
+    assert _archive_destination("logs", "report.html", "S").endswith("logs/report_S.html")
+    # Must keep the backend suffix rather than flattening to eval_results_S.json
+    assert _archive_destination("logs", "eval_results_qwen.json", "S") \
+        .endswith("logs/eval_results_qwen_S.json")
+
+
+def test_archive_never_clobbers_an_existing_archive(tmp_path):
+    """Two runs inside the same second must not overwrite each other's only
+    surviving copy."""
+    from evalkit.runner import _archive_destination
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "report_S.html").write_text("first")
+    second = _archive_destination(str(logs), "report.html", "S")
+    assert not os.path.exists(second)
+    assert second.endswith("report_S_2.html")
+
+
+def test_archive_moves_every_artifact_under_one_stamp(tmp_path):
+    from evalkit.runner import _archive_previous
+    for name in ("eval_debug.log", "eval_results.json", "report.html"):
+        (tmp_path / name).write_text(name)
+    cfg = make_config(tmp_path)
+
+    archived = _archive_previous(cfg, *(str(tmp_path / n) for n in
+                                        ("eval_debug.log", "eval_results.json", "report.html")))
+    assert len(archived) == 3
+    stamps = {os.path.splitext(os.path.basename(p))[0].rsplit("_", 2)[-2:][0] for p in archived}
+    assert len(stamps) == 1, "one run's artifacts must share a timestamp"
+    assert not (tmp_path / "report.html").exists()
+
+
+def test_archive_is_a_noop_when_nothing_exists(tmp_path):
+    from evalkit.runner import _archive_previous
+    assert _archive_previous(make_config(tmp_path), str(tmp_path / "nope.html")) == []
+    assert not (tmp_path / "logs").exists()
+
+
 # ── Single-question rerun ─────────────────────────────────────────────
 def test_single_question_merges_into_existing_results(tmp_path, problems, backend, scorer):
     run_eval(make_config(tmp_path), problems=problems, backend=backend, scorer=scorer)
