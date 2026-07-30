@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Run outputs
+eval_results*.json
+eval_comparison.json
+eval_debug*.log
+.eval_checkpoint.jsonl
+logs/
+report.html
+
+.DS_Store
+.idea/
+.vscode/

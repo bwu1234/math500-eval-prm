@@ -1,6 +1,13 @@
+# Core grading and analysis (answers.py, analysis.py, report.py)
+sympy>=1.12
+
+# Dataset loading
+datasets>=2.14.0
+
+# Process reward model scoring (prm.py) -- omit if you always run --no-prm
 torch>=2.0.0
 transformers>=4.36.0
-datasets>=2.14.0
-sympy>=1.12
 bitsandbytes>=0.41.0
+
+# Gemini backend (backends.py) -- omit if you only use qwen/mock
 google-genai>=0.3.0
