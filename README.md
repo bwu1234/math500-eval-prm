@@ -13,7 +13,14 @@ python math500_eval.py -n 100 --compare gemini,qwen  # diff two backends
 python math500_eval.py -n 20 -m mock --no-prm        # runs anywhere, no GPU or API key
 ```
 
-Every run writes `report.html` automatically.
+Every run writes `report.html` automatically, and the latest one is committed:
+
+**[View the current report →](https://htmlpreview.github.io/?https://github.com/bwu1234/math500-eval-prm/blob/main/report.html)**
+&nbsp;·&nbsp; [source](report.html)
+
+<sub>GitHub serves `.html` as source text, so the link above renders it through
+htmlpreview. The report is fully self-contained — downloading it and opening it
+locally works identically.</sub>
 
 ---
 
@@ -142,6 +149,11 @@ would have to pick one backend's results to head the page.
 Report generation runs after the model work is finished and downgrades any
 failure to a warning, so a rendering bug can never cost you a completed run.
 `--report-only` rebuilds from the results already on disk.
+
+The committed `report.html` is a real run — `gemma-4-31b-it`, 10 questions,
+PRM scoring on. It is small enough that the PRM/correctness AUC is undefined
+(every answer happened to be correct, so there is only one outcome class), and
+the report says so rather than printing a number it cannot support.
 
 ### Nothing is overwritten
 

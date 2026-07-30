@@ -12,7 +12,10 @@ eval_comparison.json
 eval_debug*.log
 .eval_checkpoint.jsonl
 logs/
-report.html
+
+# report.html is deliberately NOT ignored: it is the artifact worth looking at,
+# and nobody browsing the repo can generate one without a GPU and an API key.
+# Per-run archives under logs/ stay ignored.
 
 .DS_Store
 .idea/
