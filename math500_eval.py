@@ -168,7 +168,7 @@ def main(argv=None) -> int:
         names = [os.path.basename(p)[len("eval_results_"):-len(".json")] for p in found]
         emit_comparison_reports(
             config, args.out_dir, args.report,
-            {n: os.path.basename(p) for n, p in zip(names, found)},
+            {n: os.path.basename(p) for n, p in zip(names, found, strict=True)},
         )
         return 0
 

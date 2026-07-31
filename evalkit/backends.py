@@ -17,7 +17,7 @@ import random
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 __all__ = ["Generation", "Backend", "GeminiBackend", "OllamaBackend",
            "MockBackend", "build_backend", "BACKEND_NAMES", "DEFAULT_MODELS",

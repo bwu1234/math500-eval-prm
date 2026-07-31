@@ -1,7 +1,6 @@
 """Backend contract tests, including the retry loop and lazy-import guarantee."""
 
 import sys
-import urllib.error
 
 import pytest
 

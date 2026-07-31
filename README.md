@@ -338,7 +338,7 @@ evalkit/
 scripts/
   audit_normaliser.py  reproduces the grader collision sweep
   regrade.py           re-grades a finished run against the current grader
-tests/                 244 tests, ~1s, no GPU required
+tests/                 260 tests, ~1s, no GPU required
 ```
 
 The split is load-bearing: `answers`, `analysis` and `report` import no

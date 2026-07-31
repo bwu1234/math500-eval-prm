@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from .analysis import (
@@ -238,7 +238,7 @@ def solve_question(row: dict, position: int, total: int, backend, scorer,
             "prm_score": chosen["prm_score"],
         }
     if config.k > 1:
-        log.detail(f"  Selection: " + ", ".join(
+        log.detail("  Selection: " + ", ".join(
             f"{s}={'OK' if v['correct'] else 'X'}({v['predicted']!r})"
             for s, v in selection.items()))
 
@@ -439,7 +439,7 @@ def _print_summary(summary: dict, log: RunLogger, results_path: str, log_path: s
             lines.append(f"    unvalidated: only {cal.get('n_incorrect')} incorrect "
                          f"solution(s) to rank against")
     if summary.get("selection_accuracy") and summary.get("k", 1) > 1:
-        lines.append("  Selection accuracy (k=%d):" % summary["k"])
+        lines.append(f"  Selection accuracy (k={summary['k']}):")
         for strategy, value in summary["selection_accuracy"].items():
             lines.append(f"    {strategy:<13} {value:.0%}")
     if summary.get("synthetic"):

@@ -84,12 +84,12 @@ def roc_auc(scores: list[float], labels: list[bool]) -> float | None:
     n = len(scores)
     if n != len(labels) or n == 0:
         return None
-    pos = sum(1 for l in labels if l)
+    pos = sum(1 for label in labels if label)
     neg = n - pos
     if pos == 0 or neg == 0:
         return None  # undefined with only one class present
 
-    pairs = sorted(zip(scores, labels), key=lambda p: p[0])
+    pairs = sorted(zip(scores, labels, strict=True), key=lambda p: p[0])
     ranks = [0.0] * n
     i = 0
     while i < n:
@@ -101,7 +101,7 @@ def roc_auc(scores: list[float], labels: list[bool]) -> float | None:
             ranks[k] = avg_rank
         i = j + 1
 
-    rank_sum = sum(r for r, (_, label) in zip(ranks, pairs) if label)
+    rank_sum = sum(r for r, (_, label) in zip(ranks, pairs, strict=True) if label)
     return (rank_sum - pos * (pos + 1) / 2) / (pos * neg)
 
 
@@ -140,7 +140,7 @@ def pearson(xs: list[float], ys: list[float]) -> float | None:
     if n != len(ys) or n < 2:
         return None
     mx, my = sum(xs) / n, sum(ys) / n
-    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
     dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
     dy = math.sqrt(sum((y - my) ** 2 for y in ys))
     if dx == 0 or dy == 0:
@@ -160,7 +160,7 @@ def calibration_bins(scores: list[float], labels: list[bool],
          "count": 0, "correct": 0, "score_sum": 0.0}
         for i in range(n_bins)
     ]
-    for score, label in zip(scores, labels):
+    for score, label in zip(scores, labels, strict=True):
         clamped = min(max(score, 0.0), 1.0)
         idx = min(int(clamped * n_bins), n_bins - 1)
         bins[idx]["count"] += 1
@@ -193,8 +193,8 @@ def prm_calibration(rows: list[dict], score_key: str = "prm_score",
     scores = [float(r[score_key]) for r in scored]
     labels = [bool(r.get(correct_key)) for r in scored]
 
-    correct_scores = [s for s, l in zip(scores, labels) if l]
-    wrong_scores = [s for s, l in zip(scores, labels) if not l]
+    correct_scores = [s for s, label in zip(scores, labels, strict=True) if label]
+    wrong_scores = [s for s, label in zip(scores, labels, strict=True) if not label]
     mean = lambda xs: sum(xs) / len(xs) if xs else None  # noqa: E731
 
     mean_correct, mean_wrong = mean(correct_scores), mean(wrong_scores)
@@ -231,7 +231,7 @@ def prm_calibration(rows: list[dict], score_key: str = "prm_score",
         "auc": auc,
         "auc_ci": list(ci) if ci else None,
         "auc_beats_chance": informative,
-        "point_biserial_r": pearson(scores, [float(l) for l in labels]),
+        "point_biserial_r": pearson(scores, [float(label) for label in labels]),
         "mean_prm_correct": mean_correct,
         "mean_prm_incorrect": mean_wrong,
         "separation": (mean_correct - mean_wrong)

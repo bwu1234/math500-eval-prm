@@ -10,7 +10,6 @@ Most runs here are shorter than MATH-500, so they land on the partial path
 """
 
 import json
-import os
 
 import pytest
 

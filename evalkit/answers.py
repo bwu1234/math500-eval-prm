@@ -489,7 +489,10 @@ def are_equivalent(pred: str, gold: str, tol: float = 1e-9) -> bool:
         gold_parts, gold_delims = gold_split
         compatible = not pred_delims or not gold_delims or pred_delims == gold_delims
         if len(pred_parts) == len(gold_parts) and compatible:
-            return all(are_equivalent(p, g, tol) for p, g in zip(pred_parts, gold_parts))
+            return all(
+                are_equivalent(p, g, tol)
+                for p, g in zip(pred_parts, gold_parts, strict=True)
+            )
         return False
 
     pred_expr = try_sympy_parse(pred_n)
@@ -632,7 +635,7 @@ def _elements_match(a: str, b: str) -> bool:
     if delims_a and delims_b and delims_a != delims_b:
         return False
     if ordered_a or ordered_b:
-        return all(_scalar_equal(x, y) for x, y in zip(ea, eb))
+        return all(_scalar_equal(x, y) for x, y in zip(ea, eb, strict=True))
     remaining = list(eb)
     for x in ea:
         for i, y in enumerate(remaining):
@@ -719,7 +722,7 @@ def extract_final_answer(text: str) -> tuple[str, bool]:
         if found:
             return found[-1].strip(), True
 
-    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
     return (lines[-1] if lines else text.strip()), False
 
 
@@ -761,7 +764,7 @@ def extract_steps(text: str) -> list[str]:
     own is out of distribution. Keeping each block whole and attached to its
     lead-in sentence is what makes the resulting scores meaningful.
     """
-    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
     steps: list[str] = []
     i = 0
     while i < len(lines):

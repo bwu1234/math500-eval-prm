@@ -13,13 +13,13 @@ from evalkit.backends import MockBackend
 from evalkit.runner import (
     FULL_RUN,
     EvalConfig,
+    RunLogger,
     aggregate,
     load_checkpoint,
     report_targets,
     run_eval,
     solve_question,
 )
-from evalkit.runner import RunLogger
 
 
 def make_config(tmp_path, **kw):

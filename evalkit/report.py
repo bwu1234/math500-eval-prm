@@ -462,8 +462,10 @@ def _steps_html(row: dict) -> str:
     out = []
     for i, step in enumerate(steps):
         score = scores[i] if i < len(scores) else None
-        badge = ("<span class='score' style=\"background:%s\">%s</span>"
-                 % (score_color(score), num(score, 2))) if score is not None else ""
+        badge = (
+            f"<span class='score' style=\"background:{score_color(score)}\">"
+            f"{num(score, 2)}</span>"
+        ) if score is not None else ""
         out.append(f"<li>{badge}<span class='step'>{esc(step)}</span></li>")
     return f"<ol class='steps'>{''.join(out)}</ol>"
 
