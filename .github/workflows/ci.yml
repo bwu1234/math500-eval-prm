@@ -19,4 +19,4 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Test
-        run: pytest tests/ -q
+        run: python -m pytest tests/ -q
