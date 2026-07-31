@@ -13,9 +13,12 @@ eval_debug*.log
 .eval_checkpoint.jsonl
 logs/
 
-# report.html is deliberately NOT ignored: it is the artifact worth looking at,
-# and nobody browsing the repo can generate one without a GPU and an API key.
-# Per-run archives under logs/ stay ignored.
+# report.html is deliberately NOT ignored, and neither are the per-model
+# reports (report_qwen.html) beside it: they are the artifacts worth looking
+# at, and nobody browsing the repo can generate one without a GPU and an API
+# key. Only a full 500-question run writes those. Reports from shorter runs
+# are scratch, and per-run archives under logs/ stay ignored.
+*_partial.html
 
 .DS_Store
 .idea/

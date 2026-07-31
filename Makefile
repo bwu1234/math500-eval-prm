@@ -28,4 +28,4 @@ report:
 clean:
 	rm -rf __pycache__ */__pycache__ .pytest_cache .ruff_cache
 	rm -f eval_results*.json eval_comparison.json eval_debug*.log \
-	      .eval_checkpoint.jsonl report.html
+	      .eval_checkpoint.jsonl report.html report_*.html *_partial.html

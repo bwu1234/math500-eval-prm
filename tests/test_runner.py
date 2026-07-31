@@ -11,9 +11,11 @@ import pytest
 
 from evalkit.backends import MockBackend
 from evalkit.runner import (
+    FULL_RUN,
     EvalConfig,
     aggregate,
     load_checkpoint,
+    report_targets,
     run_eval,
     solve_question,
 )
@@ -143,6 +145,35 @@ def test_truncated_checkpoint_line_is_tolerated(tmp_path):
 
 def test_missing_checkpoint_is_not_an_error(tmp_path):
     assert load_checkpoint(str(tmp_path / "nope.jsonl"), "abc") == {}
+
+
+# ── Which reports a run may write ─────────────────────────────────────
+def test_a_full_run_is_the_whole_of_math_500():
+    assert FULL_RUN == 500
+
+
+def test_only_a_full_run_writes_the_headline_report():
+    assert report_targets("report.html", "qwen", 500) == [
+        "report.html", "report_qwen.html"]
+    # One question short is not a 500-question result, however close it looks.
+    assert report_targets("report.html", "qwen", 499) == ["report_qwen_partial.html"]
+
+
+def test_every_model_gets_its_own_full_run_report():
+    assert report_targets("report.html", "gemini", 500)[1] == "report_gemini.html"
+    assert report_targets("report.html", "qwen", 500)[1] == "report_qwen.html"
+
+
+def test_a_comparison_backend_never_claims_the_headline_report():
+    assert report_targets("report.html", "qwen", 500, canonical=False) == [
+        "report_qwen.html"]
+    assert report_targets("report.html", "qwen", 4, canonical=False) == [
+        "report_qwen_partial.html"]
+
+
+def test_report_targets_follow_a_custom_report_path():
+    assert report_targets("out/scorecard.html", "mock", 500) == [
+        "out/scorecard.html", "out/scorecard_mock.html"]
 
 
 # ── Archiving ─────────────────────────────────────────────────────────

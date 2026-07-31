@@ -27,13 +27,40 @@ from .backends import build_backend
 from .prm import build_scorer
 
 __all__ = ["EvalConfig", "RunLogger", "run_eval", "run_comparison",
-           "load_problems", "suffixed_path", "PROMPT_TEMPLATE"]
+           "load_problems", "suffixed_path", "report_targets", "is_full_run",
+           "FULL_RUN", "PROMPT_TEMPLATE"]
+
+FULL_RUN = 500  # the whole of MATH-500; anything less is a partial measurement
 
 
 def suffixed_path(path: str, name: str) -> str:
     """``report.html`` + ``qwen`` -> ``report_qwen.html``."""
     root, ext = os.path.splitext(path)
     return f"{root}_{name}{ext or '.html'}"
+
+
+def is_full_run(num_questions: int) -> bool:
+    return num_questions >= FULL_RUN
+
+
+def report_targets(report_path: str, backend: str, num_questions: int,
+                   canonical: bool = True) -> list[str]:
+    """Every report file a run of this size is entitled to write.
+
+    ``report.html`` is the headline artifact -- the one that gets committed and
+    linked -- so it stands for a complete 500-question run and nothing else. A
+    20-question spot check that overwrote it would leave a 4% sample being read
+    as *the* result, so short runs land on their own ``_partial`` path instead.
+
+    Every full run also writes a per-backend copy, so finishing 500 questions
+    on one model no longer destroys the report of the model before it.
+    """
+    if not is_full_run(num_questions):
+        return [suffixed_path(report_path, f"{backend}_partial")]
+    per_model = suffixed_path(report_path, backend)
+    # A comparison run has no single backend that could claim report.html.
+    return [report_path, per_model] if canonical else [per_model]
+
 
 DATASET = "HuggingFaceH4/MATH-500"
 DEFAULT_RESULTS = "eval_results.json"
@@ -65,6 +92,9 @@ class EvalConfig:
     results_file: str = DEFAULT_RESULTS
     log_file: str = DEFAULT_LOG
     report_file: str = DEFAULT_REPORT
+    # A comparison sub-run is one model among several, so it never owns the
+    # headline report even when it covers all 500 questions.
+    canonical_report: bool = True
 
     def resolved_temperature(self) -> float:
         """Sampling k>1 solutions at temperature 0 yields k identical
@@ -444,11 +474,15 @@ def run_eval(config: EvalConfig, problems: list[dict] | None = None,
 
     os.makedirs(config.out_dir, exist_ok=True)
     if not single:
-        # The report is archived alongside the run it describes, and always --
-        # even with --no-report -- so a stale report can never sit next to the
-        # results of a newer run.
-        _archive_previous(config, log_path, results_path,
-                          config.path(config.report_file))
+        # The reports this run is about to replace are archived alongside it,
+        # and always -- even with --no-report -- so a stale report can never
+        # sit next to the results of a newer run. Only those: a partial run
+        # writes no report.html, so it must not archive one either, or a
+        # 20-question spot check would quietly retire the 500-question report.
+        reports = [config.path(p) for p in report_targets(
+            config.report_file, config.backend, config.num_questions,
+            canonical=config.canonical_report)]
+        _archive_previous(config, log_path, results_path, *reports)
         open(log_path, "w").close()
 
     log = RunLogger(log_path, verbose=config.verbose)
@@ -519,11 +553,12 @@ def run_comparison(config: EvalConfig, backends: list[str],
     for name in backends:
         print(f"\n{'#' * 60}\n# backend: {name}\n{'#' * 60}", flush=True)
         results_files[name] = f"eval_results_{name}.json"
-        report_files[name] = suffixed_path(config.report_file, name)
+        report_files[name] = report_targets(config.report_file, name,
+                                            config.num_questions, canonical=False)
         sub = EvalConfig(**{**asdict(config), "backend": name, "model": None,
                             "results_file": results_files[name],
                             "log_file": f"eval_debug_{name}.log",
-                            "report_file": report_files[name]})
+                            "canonical_report": False})
         summary = run_eval(sub, problems=problems)
         runs[name] = summary["results"]
         summaries[name] = {k: v for k, v in summary.items() if k != "results"}
@@ -534,6 +569,8 @@ def run_comparison(config: EvalConfig, backends: list[str],
     # the default eval_results.json. Recording the paths keeps report building
     # from silently falling back to a stale file left by an earlier run.
     comparison["results_files"] = results_files
+    # Each backend's reports, for the record: which ones exist depends on
+    # whether the comparison covered the full 500 questions.
     comparison["report_files"] = report_files
     comparison["timestamp"] = datetime.now().isoformat(timespec="seconds")
 

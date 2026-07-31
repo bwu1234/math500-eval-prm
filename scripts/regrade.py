@@ -24,7 +24,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from evalkit.analysis import SELECTION_STRATEGIES  # noqa: E402
 from evalkit.answers import final_answer_correct  # noqa: E402
 from evalkit.report import build_report, write_report  # noqa: E402
-from evalkit.runner import EvalConfig, aggregate  # noqa: E402
+from evalkit.runner import (  # noqa: E402
+    DEFAULT_REPORT,
+    EvalConfig,
+    aggregate,
+    report_targets,
+)
 
 
 def regrade_row(row: dict) -> list[str]:
@@ -125,8 +130,13 @@ def main() -> int:
         out_dir = os.path.dirname(os.path.abspath(args.results)) or "."
         report = build_report(out_dir=out_dir,
                              results_file=os.path.basename(args.results))
-        path = write_report(report, os.path.join(out_dir, "report.html"))
-        print(f"wrote {path}")
+        # Re-grading does not change how many questions were answered, so the
+        # same rule as a live run applies: only a full 500-question result may
+        # claim report.html.
+        for target in report_targets(DEFAULT_REPORT,
+                                     new.get("model_backend") or "model",
+                                     new.get("num_questions") or 0):
+            print(f"wrote {write_report(report, os.path.join(out_dir, target))}")
     return 0
 
 

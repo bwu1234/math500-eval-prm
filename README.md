@@ -13,7 +13,9 @@ python math500_eval.py -n 100 --compare gemini,qwen  # diff two backends
 python math500_eval.py -n 20 -m mock --no-prm        # runs anywhere, no GPU or API key
 ```
 
-Every run writes `report.html` automatically, and the latest one is committed:
+Every run writes a report automatically; the committed `report.html` is the
+latest **full 500-question** run, which is the only kind of run allowed to
+replace it:
 
 **[View the current report →](https://htmlpreview.github.io/?https://github.com/bwu1234/math500-eval-prm/blob/main/report.html)**
 &nbsp;·&nbsp; [source](report.html)
@@ -211,20 +213,45 @@ per-question drilldown where **each reasoning step is shaded by its PRM
 reward** — which localises where a solution went wrong.
 
 ```bash
-python math500_eval.py -n 100                    # writes report.html
+python math500_eval.py -n 500                    # writes report.html + report_gemini.html
+python math500_eval.py -n 100                    # writes report_gemini_partial.html
 python math500_eval.py -n 100 --report out.html  # somewhere else
 python math500_eval.py -n 100 --no-report        # skip it
 python math500_eval.py --report-only             # rebuild, no model run
 ```
 
-`--compare` writes one report per backend (`report_gemini.html`,
-`report_qwen.html`), each carrying the shared comparison section — a
-comparison run produces no combined `eval_results.json`, so a single report
-would have to pick one backend's results to head the page.
+### Only a full run owns `report.html`
+
+`report.html` is the artifact that gets committed and linked, so it stands for
+a complete 500-question run and nothing else. A 20-question spot check that
+overwrote it would leave a 4% sample being read as *the* result, so where a
+report lands is decided by how many questions the run actually covered:
+
+| Run | Writes |
+|---|---|
+| 500 questions | `report.html` **and** `report_<model>.html` |
+| fewer than 500 | `report_<model>_partial.html` only |
+| `--compare`, 500 questions | `report_<model>.html` per backend |
+| `--compare`, fewer | `report_<model>_partial.html` per backend |
+
+Every full run also writes a per-model copy, so finishing 500 questions on
+`qwen` no longer destroys the `gemini` report that came before it — the full
+runs accumulate side by side instead of overwriting one another. A comparison
+run never writes `report.html`: no single backend in it can head the page.
+
+The results file is the authority, not the flags. A `-q` rerun spliced back
+into a finished 500-question run is still a full run and refreshes
+`report.html`; a run launched with `-n 500` that stops early is not, and does
+not. A custom `--report scorecard.html` follows the same rule under its own
+name (`scorecard_qwen.html`, `scorecard_qwen_partial.html`).
+
+`--compare` writes one report per backend, each carrying the shared comparison
+section — a comparison run produces no combined `eval_results.json`, so a
+single report would have to pick one backend's results to head the page.
 
 Report generation runs after the model work is finished and downgrades any
 failure to a warning, so a rendering bug can never cost you a completed run.
-`--report-only` rebuilds from the results already on disk.
+`--report-only` rebuilds from the results already on disk, under the same rule.
 
 The committed `report.html` is the full 500-question `gemma-4-31b-it` run
 described above.
@@ -236,17 +263,19 @@ log, results and report move into `logs/` under a **shared timestamp**, so the
 three files belonging to one run stay correlated:
 
 ```
-report.html                         <- the run you just did
-eval_results.json
-logs/report_20260730_001752.html    <- the run before it
+report.html                         <- the last full 500-question run
+eval_results.json                   <- the run you just did
+logs/report_20260730_001752.html    <- the full run before it
 logs/eval_results_20260730_001752.json
 logs/eval_debug_20260730_001752.log
 ```
 
 A comparison run archives each backend separately
-(`logs/report_qwen_<stamp>.html`). The previous report is archived even under
-`--no-report`, so a stale report can never sit next to the results of a newer
-run. Rebuild any archived report with
+(`logs/report_qwen_<stamp>.html`). A run only archives the reports it is about
+to replace, so a partial run leaves `report.html` where it is rather than
+quietly retiring it — the log and results still rotate. Reports are archived
+even under `--no-report`, so a stale report can never sit next to the results
+of a newer run. Rebuild any archived report with
 `python math500_eval.py --report-only --out-dir <dir>`.
 
 ---
@@ -262,7 +291,7 @@ run. Rebuild any archived report with
 | `--temperature` | default 0 for `k=1`, 0.7 for `k>1` |
 | `-q, --question` | rerun one question, merging it into existing results |
 | `--compare A,B` | run the same questions through several backends |
-| `--report PATH` | where to write the report (default `report.html`) |
+| `--report PATH` | base path for the report (default `report.html`); only a full 500-question run writes it |
 | `--no-report` | skip report generation |
 | `--report-only` | rebuild the report from existing results |
 | `--no-prm` | skip PRM scoring (no GPU needed) |
