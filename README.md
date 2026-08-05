@@ -84,8 +84,17 @@ a token-classification model trained (TRL stepwise-reward) on **PRM800K**, a
 dataset of human step-level correctness annotations. Each reasoning step is
 scored on the cumulative prefix that precedes it, and the reward is
 `P(LABEL_1)` read off the step's trailing separator token — no prompting, no
-answer parsing, no judge model. It loads 4-bit quantised to fit a ~4 GB GPU
-budget.
+answer parsing, no judge model.
+
+It runs at full precision by default. Quantizing a reward model is not the same
+trade as quantizing a generator: nf4 error lands directly on the score the
+calibration analysis below is computed over, so the memory is worth paying
+unless you haven't got it. `--load-in-4bit` opts in, and works wherever the
+installed bitsandbytes has kernels for the local accelerator — CUDA, and MPS
+since bitsandbytes 0.50. That support is queried at runtime rather than
+hardcoded, so a machine that gains a backend in a later release starts using it
+without a code change, and a machine that has none gets an error rather than a
+silent fallback.
 
 Because the PRM never sees the gold answer, it cannot be reading correctness
 off the final result — it is scoring the reasoning itself.
@@ -200,6 +209,37 @@ into a final answer four ways:
 The headline `accuracy` always stays the single-shot number; reporting a
 best-of-*n* result as "accuracy" would overstate the model.
 
+### Process or outcome reward
+
+Reranking is the one place the harness deliberately withholds the gold answer,
+so it is where a reward model earns its keep. Two are available:
+
+| | `--orm` off (default) | `--orm` |
+|---|---|---|
+| model | `Qwen2.5-Math-1.5B-Instruct-PRM-0.2` | `RLHFlow/Llama3.1-8B-ORM-Deepseek-Data` |
+| granularity | one score per reasoning step | one score per solution |
+| sees the final answer | no — `extract_steps` drops the `\boxed` line | yes, the response verbatim |
+| mechanism | token classification, `P(LABEL_1)` at the step separator | generative: the assistant turn is forced to `"+"` and the score is `P("+")` against `P("-")` |
+| output | `P(correct)` per step | `P(correct)` for the solution |
+
+Both are `P(correct)`, both write the same `prm_score` column, and every run
+records `scorer_kind` and `scorer_model` alongside it so a results file always
+says which model produced its numbers. Neither is the accuracy metric: MATH-500
+ships gold answers and `answers.final_answer_correct` decides correctness
+exactly, which is what makes the reranking comparison measurable in the first
+place.
+
+The two are not interchangeable as evidence. The PRM never sees the answer, so
+its calibration is a statement about reasoning quality; the ORM does, so a high
+ORM score may just mean the answer looked plausible. Read it as a selection
+signal, not as a judgement of the reasoning.
+
+<sub>The ORM's scoring format — the `"+"`/`"-"` verdict turn and the logit
+position it is read from — is a property of the Llama-3.1 chat template, not of
+the model weights. `prm.py` checks that alignment on every call and raises
+rather than scoring the wrong position, since a shifted template would produce
+plausible-looking numbers that mean nothing.</sub>
+
 ---
 
 ## The report
@@ -294,7 +334,9 @@ of a newer run. Rebuild any archived report with
 | `--report PATH` | base path for the report (default `report.html`); only a full 500-question run writes it |
 | `--no-report` | skip report generation |
 | `--report-only` | rebuild the report from existing results |
-| `--no-prm` | skip PRM scoring (no GPU needed) |
+| `--no-prm` | skip reward scoring entirely (no GPU needed) |
+| `--orm` | score with an outcome reward model instead of the step-level PRM |
+| `--load-in-4bit` | quantize the reward model to nf4 (off by default) |
 | `--no-resume` | ignore any checkpoint and start fresh |
 
 ### Long runs are resumable
@@ -333,12 +375,12 @@ evalkit/
   analysis.py          accuracy slices, AUC, calibration, voting      (stdlib only)
   report.py            self-contained HTML + inline SVG               (stdlib only)
   backends.py          Gemini / Ollama / mock, shared retry logic
-  prm.py               process reward model scoring
+  prm.py               reward scoring: step-level PRM, outcome-level ORM
   runner.py            pipeline, checkpointing, aggregation
 scripts/
   audit_normaliser.py  reproduces the grader collision sweep
   regrade.py           re-grades a finished run against the current grader
-tests/                 260 tests, ~1s, no GPU required
+tests/                 290 tests, ~1s, no GPU required
 ```
 
 The split is load-bearing: `answers`, `analysis` and `report` import no

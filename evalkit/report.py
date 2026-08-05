@@ -272,12 +272,15 @@ def build_report(out_dir: str = ".", results_file: str = "eval_results.json",
 
 def _stat_cards(summary: dict, rows: list[dict]) -> str:
     cal = summary.get("prm_calibration") or {}
+    labels = _scorer_labels(summary)
+    abbr = labels["abbr"]
     cards = [
         ("Accuracy", pct(summary.get("accuracy"), 1),
          f"{summary.get('correct', 0)}/{summary.get('num_questions', len(rows))} correct"),
-        ("Avg PRM score", num(summary.get("avg_prm_score")),
-         "mean step reward" if summary.get("avg_prm_score") is not None else "PRM disabled"),
-        ("PRM &rarr; correct AUC", num(cal.get("auc")),
+        (f"Avg {abbr} score", num(summary.get("avg_prm_score")),
+         labels["note"] if summary.get("avg_prm_score") is not None
+         else "reward scoring disabled"),
+        (f"{abbr} &rarr; correct AUC", num(cal.get("auc")),
          "0.5 = no signal"),
         ("Parse failures", str(summary.get("parse_failures", 0)),
          f"{pct(summary.get('parse_failure_rate'))} of responses"),
@@ -292,11 +295,48 @@ def _stat_cards(summary: dict, rows: list[dict]) -> str:
     )
 
 
+def _scorer_labels(summary: dict) -> dict:
+    """What to call the reward model in prose, for this run.
+
+    The scores share one column (``prm_score``) whichever model produced them,
+    so every label the reader sees has to come from the recorded scorer kind
+    rather than being hardcoded -- an ORM score captioned "step reward" would
+    describe a measurement that never took place.
+    """
+    if (summary.get("scorer_kind") or "prm") == "orm":
+        return {
+            "abbr": "ORM",
+            "heading": "Outcome reward analysis",
+            "model": summary.get("scorer_model") or "Llama3.1-8B-ORM-Deepseek-Data",
+            "note": "mean outcome reward",
+            "lede": ("Does the outcome reward predict whether the final answer is "
+                     "right? The ORM is shown the response in full, boxed answer "
+                     "included, so this measures its usefulness for ranking "
+                     "candidate solutions &mdash; not its judgement of the reasoning."),
+            "footnote": ("a generative outcome reward model: the score is the "
+                         "probability it assigns to a &ldquo;+&rdquo; verdict on "
+                         "the solution as a whole."),
+        }
+    return {
+        "abbr": "PRM",
+        "heading": "Process reward analysis",
+        "model": summary.get("scorer_model") or "Qwen2.5-Math-1.5B-Instruct-PRM-0.2",
+        "note": "mean step reward",
+        "lede": ("Does the step-level reward predict whether the final answer is "
+                 "right? This is the question that justifies spending GPU time on "
+                 "the PRM at all."),
+        "footnote": ("a process reward model trained on PRM800K step-level "
+                     "human labels."),
+    }
+
+
 def _prm_section(summary: dict, rows: list[dict]) -> str:
     cal = summary.get("prm_calibration") or {}
+    labels = _scorer_labels(summary)
+    abbr = labels["abbr"]
     if not cal.get("n"):
-        return ('<section><h2>Process reward analysis</h2>'
-                '<p class="empty">No PRM scores in this run (scoring was disabled '
+        return (f'<section><h2>{labels["heading"]}</h2>'
+                '<p class="empty">No reward scores in this run (scoring was disabled '
                 'with <code>--no-prm</code>).</p></section>')
 
     correct = [r["prm_score"] for r in rows
@@ -336,22 +376,23 @@ def _prm_section(summary: dict, rows: list[dict]) -> str:
             f"reward can be called informative."
         )
     elif auc >= 0.7:
-        verdict = ("The PRM separates correct from incorrect solutions well enough "
-                   "to be useful for reranking, and the interval excludes chance.")
+        verdict = (f"The {abbr} separates correct from incorrect solutions well "
+                   "enough to be useful for reranking, and the interval excludes "
+                   "chance.")
     elif auc > 0.5:
-        verdict = ("The PRM carries a weak but statistically real signal; best-of-n "
-                   "reranking may help marginally.")
+        verdict = (f"The {abbr} carries a weak but statistically real signal; "
+                   "best-of-n reranking may help marginally.")
     else:
-        verdict = ("The PRM ranks incorrect solutions <em>above</em> correct ones "
-                   "more often than not &mdash; worse than chance.")
+        verdict = (f"The {abbr} ranks incorrect solutions <em>above</em> correct "
+                   "ones more often than not &mdash; worse than chance.")
 
     stats = [
         ("AUC", num(auc), "P(correct scored above incorrect)"),
         ("AUC 95% CI", f"[{num(ci[0], 2)}, {num(ci[1], 2)}]" if ci else "n/a",
          f"{cal.get('n_correct', 0)} correct vs {n_wrong} incorrect"),
         ("Point-biserial r", num(cal.get("point_biserial_r")), "score vs correctness"),
-        ("Mean PRM | correct", num(cal.get("mean_prm_correct")), ""),
-        ("Mean PRM | incorrect", num(cal.get("mean_prm_incorrect")), ""),
+        (f"Mean {abbr} | correct", num(cal.get("mean_prm_correct")), ""),
+        (f"Mean {abbr} | incorrect", num(cal.get("mean_prm_incorrect")), ""),
         ("Separation", num(cal.get("separation")), "correct minus incorrect"),
         ("Calibration error", num(cal.get("expected_calibration_error")), "ECE"),
     ]
@@ -362,9 +403,8 @@ def _prm_section(summary: dict, rows: list[dict]) -> str:
     )
 
     return f"""<section>
-  <h2>Process reward analysis</h2>
-  <p class="lede">Does the step-level reward predict whether the final answer is
-  right? This is the question that justifies spending GPU time on the PRM at all.</p>
+  <h2>{labels["heading"]}</h2>
+  <p class="lede">{labels["lede"]}</p>
   <p class="verdict">{verdict}</p>
   <div class="grid-2">
     <figure><figcaption>Reliability curve &mdash; dot size is bin population</figcaption>
@@ -382,11 +422,12 @@ def _selection_section(summary: dict) -> str:
     selection = summary.get("selection_accuracy") or {}
     if not selection or summary.get("k", 1) <= 1:
         return ""
+    abbr = _scorer_labels(summary)["abbr"]
     labels = {
         "first": "Single shot",
         "majority": "Majority vote",
-        "prm_best": "PRM best-of-n",
-        "prm_weighted": "PRM-weighted vote",
+        "prm_best": f"{abbr} best-of-n",
+        "prm_weighted": f"{abbr}-weighted vote",
     }
     total = summary.get("num_questions", 0)
     items = [(labels.get(k, k), v, round(v * total), total) for k, v in selection.items()]
@@ -470,7 +511,7 @@ def _steps_html(row: dict) -> str:
     return f"<ol class='steps'>{''.join(out)}</ol>"
 
 
-def _questions_section(rows: list[dict]) -> str:
+def _questions_section(rows: list[dict], abbr: str = "PRM") -> str:
     items = []
     for r in rows:
         ok = bool(r.get("answer_accuracy"))
@@ -490,7 +531,7 @@ def _questions_section(rows: list[dict]) -> str:
     <span class="qans mono">got {esc(r.get('predicted', ''))[:60]}
       &middot; want {esc(r.get('expected', ''))[:60]}</span>
     <span class="qprm mono" style="color:{score_color(r.get('prm_score'))}">
-      PRM {num(r.get('prm_score'), 2)}</span>
+      {abbr} {num(r.get('prm_score'), 2)}</span>
     {''.join(flags)}
   </summary>
   <div class="qbody">
@@ -500,9 +541,11 @@ def _questions_section(rows: list[dict]) -> str:
 </details>""")
     return f"""<section>
   <h2>Questions <span class="dim">({len(rows)})</span></h2>
-  <p class="lede">Each step is shaded by its PRM reward. A run of green steps
-  ending in a wrong answer is the interesting case: it localises where the
-  reasoning actually broke down.</p>
+  <p class="lede">{"Each step is shaded by its PRM reward. A run of green steps "
+  "ending in a wrong answer is the interesting case: it localises where the "
+  "reasoning actually broke down." if abbr == "PRM" else
+  "The ORM scores each solution as a whole, so there is no per-step shading "
+  "here &mdash; the steps are shown as extracted, unscored."}</p>
   {''.join(items)}
 </section>"""
 
@@ -607,7 +650,7 @@ ol.steps li { display: flex; gap: 9px; padding: 5px 0; align-items: flex-start;
 
 def render_report(report: dict) -> str:
     summary, rows = report["summary"], report["rows"]
-    cal = summary.get("prm_calibration") or {}
+    labels = _scorer_labels(summary)
 
     difficulty_items = [
         (f"L{k}", v["accuracy"], v["correct"], v["total"])
@@ -628,7 +671,7 @@ def render_report(report: dict) -> str:
             f"{summary.get('num_questions', len(rows))} questions &middot; "
             f"k={summary.get('k', 1)} &middot; "
             f"temperature {summary.get('temperature', 0)} &middot; "
-            f"PRM {'on' if summary.get('prm_enabled') else 'off'} &middot; "
+            f"{labels['abbr']} {'on' if summary.get('prm_enabled') else 'off'} &middot; "
             f"{esc(summary.get('timestamp') or datetime.now().isoformat(timespec='seconds'))}")
 
     return f"""<title>MATH-500 evaluation report</title>
@@ -659,13 +702,13 @@ def render_report(report: dict) -> str:
   {_prm_section(summary, rows)}
   {_selection_section(summary)}
   {_comparison_section(report.get("comparison"))}
-  {_questions_section(rows)}
+  {_questions_section(rows, labels["abbr"])}
 
   <section>
     <p class="sub">Generated by <span class="mono">math500_eval.py</span>.
-    Reasoning steps are scored by
-    <span class="mono">{esc(cal.get('model', 'Qwen2.5-Math-1.5B-Instruct-PRM-0.2'))}</span>,
-    a process reward model trained on PRM800K step-level human labels.</p>
+    Solutions are scored by
+    <span class="mono">{esc(labels['model'])}</span>,
+    {labels['footnote']}</p>
   </section>
 </div>"""
 

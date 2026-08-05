@@ -125,6 +125,31 @@ def test_report_without_prm(tmp_path, problems):
     assert "--no-prm" in html  # explains the empty panel rather than showing zeros
 
 
+def test_report_names_the_outcome_model_when_the_orm_scored(
+        tmp_path, problems, outcome_scorer):
+    """The scores share one column whichever model produced them, so the page
+    has to attribute them correctly -- an ORM score captioned as a step reward
+    describes a measurement that never happened."""
+    cfg = EvalConfig(num_questions=12, backend="mock", use_prm=True,
+                     scorer_kind="orm", verbose=False, out_dir=str(tmp_path))
+    run_eval(cfg, problems=problems, backend=MockBackend(accuracy=0.6),
+             scorer=outcome_scorer)
+    html = render_report(build_report(out_dir=str(tmp_path)))
+
+    assert "Outcome reward analysis" in html
+    assert "Process reward analysis" not in html
+    assert "fake-orm" in html
+    assert "PRM800K" not in html
+    assert "no per-step shading" in html
+
+
+def test_report_still_credits_the_prm_by_default(rendered):
+    html, _ = rendered
+    assert "Process reward analysis" in html
+    assert "Outcome reward analysis" not in html
+    assert "PRM800K" in html
+
+
 def test_report_includes_comparison_when_present(tmp_path, problems, scorer):
     cfg = EvalConfig(num_questions=12, backend="mock", verbose=False,
                      out_dir=str(tmp_path))

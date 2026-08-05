@@ -7,6 +7,7 @@ Examples
     python math500_eval.py -n 20 -m qwen               # local Ollama model
     python math500_eval.py -n 20 -m qwen --think off   # disable thinking mode
     python math500_eval.py -n 50 -k 5                  # self-consistency, 5 samples
+    python math500_eval.py -n 50 -k 5 --orm            # rerank with an outcome RM
     python math500_eval.py -n 20 --compare gemini,qwen # diff two backends
     python math500_eval.py -n 20 -m mock --no-prm      # smoke test, no GPU or API key
     python math500_eval.py --report-only               # rebuild report from results
@@ -18,6 +19,7 @@ import os
 import sys
 
 from evalkit.backends import BACKEND_NAMES, THINK_MODES
+from evalkit.prm import ORM_MODEL
 from evalkit.report import build_report, write_report
 from evalkit.runner import (
     EvalConfig,
@@ -96,8 +98,22 @@ def parse_args(argv=None):
                    help="Sampling temperature (default: 0 for k=1, 0.7 for k>1)")
     p.add_argument("--max-tokens", type=int, default=16384,
                    help="Max output tokens per solution (default: 16384)")
-    p.add_argument("--no-prm", action="store_true",
-                   help="Skip Process Reward Model scoring (no GPU required)")
+    scoring = p.add_mutually_exclusive_group()
+    scoring.add_argument("--no-prm", action="store_true",
+                         help="Skip reward-model scoring entirely (no GPU required)")
+    scoring.add_argument("--orm", action="store_true",
+                         help="Score with an outcome reward model "
+                              f"({ORM_MODEL}) instead of the step-level PRM. One "
+                              "scalar per solution rather than one per step, and "
+                              "it sees the final answer -- a selection signal for "
+                              "best-of-n reranking, not a measure of reasoning")
+    p.add_argument("--load-in-4bit", action="store_true",
+                   help="Quantize the reward model to nf4, cutting its memory "
+                        "roughly fourfold. Off by default: unlike quantizing a "
+                        "generator, the error lands directly on the score the "
+                        "calibration analysis is computed over. Needs a "
+                        "bitsandbytes build with kernels for the local device "
+                        "(CUDA, or MPS since 0.50) and errors out if there are none")
     p.add_argument("--think", choices=THINK_MODES, default="merge",
                    help="For thinking-capable Ollama models: 'merge' folds the "
                         "model's separate thinking trace into the graded text "
@@ -136,6 +152,8 @@ def main(argv=None) -> int:
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         use_prm=not args.no_prm,
+        scorer_kind="orm" if args.orm else "prm",
+        load_in_4bit=args.load_in_4bit,
         resume=not args.no_resume,
         think=args.think,
         verbose=not args.quiet,

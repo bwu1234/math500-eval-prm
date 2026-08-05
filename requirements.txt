@@ -7,6 +7,9 @@ datasets>=2.14.0
 # Process reward model scoring (prm.py) -- omit if you always run --no-prm
 torch>=2.0.0
 transformers>=4.36.0
+# 4-bit weights. Older builds are fine -- prm.py asks bitsandbytes which
+# devices it has kernels for and falls back to bfloat16 -- but Apple silicon
+# needs >=0.50 for the MPS backend.
 bitsandbytes>=0.41.0
 
 # Gemini backend (backends.py) -- omit if you only use qwen/mock

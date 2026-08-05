@@ -24,7 +24,7 @@ from .analysis import (
 )
 from .answers import extract_final_answer, extract_steps, final_answer_correct
 from .backends import build_backend
-from .prm import build_scorer
+from .prm import SCORER_MODELS, build_scorer
 
 __all__ = ["EvalConfig", "RunLogger", "run_eval", "run_comparison",
            "load_problems", "suffixed_path", "report_targets", "is_full_run",
@@ -85,6 +85,12 @@ class EvalConfig:
     temperature: float | None = None
     max_tokens: int = 16384
     use_prm: bool = True
+    # Which reward model does the scoring: "prm" (step-level) or "orm"
+    # (outcome-level). Ignored when ``use_prm`` is False.
+    scorer_kind: str = "prm"
+    # Quantize the reward model to 4-bit. Off by default: nf4 error perturbs
+    # the score the calibration analysis is computed over.
+    load_in_4bit: bool = False
     resume: bool = True
     think: str = "merge"
     verbose: bool = True
@@ -116,6 +122,12 @@ class EvalConfig:
             "backend": self.backend, "model": self.model, "k": self.k,
             "temperature": self.resolved_temperature(),
             "max_tokens": self.max_tokens, "use_prm": self.use_prm,
+            # A PRM run and an ORM run write different numbers into the same
+            # column, so they must never resume from each other's checkpoint --
+            # and nor may a quantized run resume from a full-precision one,
+            # since nf4 error moves the scores too.
+            "scorer_kind": self.scorer_kind if self.use_prm else None,
+            "load_in_4bit": self.load_in_4bit if self.use_prm else None,
             "think": self.think if self.backend == "qwen" else None,
             "prompt": PROMPT_TEMPLATE,
         }, sort_keys=True)
@@ -176,15 +188,22 @@ def solve_once(problem: str, backend, scorer, config: EvalConfig,
         log(f"  [WARN] {gen.warning}")
 
     steps = extract_steps(gen.text)
+    # A process model scores every step and the sample score is their mean; an
+    # outcome model has no per-step signal and scores the response as a whole.
+    # Falling back on an empty step list covers both without the pipeline
+    # having to know which scorer it was handed.
     step_scores = scorer.step_scores(problem, steps)
-    prm = sum(step_scores) / len(step_scores) if step_scores else None
+    if step_scores:
+        reward = sum(step_scores) / len(step_scores)
+    else:
+        reward = scorer.score(problem, steps, text=gen.text)
     predicted, matched = extract_final_answer(gen.text)
 
     return {
         "predicted": predicted,
         "parse_matched": matched,
         "answer_accuracy": final_answer_correct(context.get("answer", ""), predicted),
-        "prm_score": round(prm, 3) if prm is not None else None,
+        "prm_score": round(reward, 3) if reward is not None else None,
         "step_prm_scores": [round(s, 3) for s in step_scores],
         "steps": steps,
         "num_steps": len(steps),
@@ -221,7 +240,11 @@ def solve_question(row: dict, position: int, total: int, backend, scorer,
             for idx, step in enumerate(sample["steps"]):
                 score = sample["step_prm_scores"][idx] if idx < len(sample["step_prm_scores"]) else float("nan")
                 log.detail(f"    [{idx}] PRM={score:.3f} | {step}")
-            log.detail(f"  Avg PRM score: {sample['prm_score']}")
+        # Outside the step block: an ORM produces a sample score with no step
+        # scores at all, and that score still has to reach the transcript.
+        if sample["prm_score"] is not None:
+            label = "Avg PRM score" if sample["step_prm_scores"] else "Reward score"
+            log.detail(f"  {label}: {sample['prm_score']}")
         log.detail(f"  Final answer extracted: {sample['predicted']!r} "
                    f"(structured match: {sample['parse_matched']})")
         log.detail(f"  Answer correct: {sample['answer_accuracy']}")
@@ -310,7 +333,8 @@ def append_checkpoint(path: str, row: dict) -> None:
 
 # ── Stage 4: aggregate ────────────────────────────────────────────────
 def aggregate(results: list[dict], config: EvalConfig, model_name: str,
-              duration: float | None = None, synthetic: bool = False) -> dict:
+              duration: float | None = None, synthetic: bool = False,
+              scorer_model: str | None = None) -> dict:
     total = len(results)
     if total == 0:
         raise ValueError("no results to aggregate")
@@ -346,6 +370,12 @@ def aggregate(results: list[dict], config: EvalConfig, model_name: str,
         "model_backend": config.backend,
         "model": model_name,
         "prm_enabled": config.use_prm,
+        # The scores live in ``prm_score`` whichever model produced them, so
+        # the summary has to say which one did -- an ORM score read as a PRM
+        # score is a claim about reasoning that was never measured.
+        "scorer_kind": config.scorer_kind if config.use_prm else "none",
+        "scorer_model": scorer_model or (
+            SCORER_MODELS.get(config.scorer_kind) if config.use_prm else None),
         "synthetic": synthetic,
         # `or 0` rather than a .get default: a truncated response records the
         # key with an explicit None, which a default would not catch. Results
@@ -401,7 +431,8 @@ def _archive_previous(config: EvalConfig, *paths: str) -> list[str]:
 
 
 def _merge_single_question(config: EvalConfig, results_path: str,
-                           result: dict, model_name: str) -> dict:
+                           result: dict, model_name: str,
+                           scorer_model: str | None = None) -> dict:
     """Splice a single rerun question back into the existing results file."""
     with open(results_path) as f:
         summary = json.load(f)
@@ -413,7 +444,7 @@ def _merge_single_question(config: EvalConfig, results_path: str,
         existing.extend([None] * (pos - len(existing)))
         existing.append(result)
     merged = [r for r in existing if r is not None]
-    summary.update(aggregate(merged, config, model_name))
+    summary.update(aggregate(merged, config, model_name, scorer_model=scorer_model))
     summary["results"] = existing
     return summary
 
@@ -421,17 +452,19 @@ def _merge_single_question(config: EvalConfig, results_path: str,
 def _print_summary(summary: dict, log: RunLogger, results_path: str, log_path: str) -> None:
     total = summary["num_questions"]
     acc = summary["accuracy"]
+    kind = (summary.get("scorer_kind") or "prm").upper()
     lines = [
         f"SUMMARY  (model: {summary['model']})",
         f"  Accuracy:  {acc:.0%} ({summary['correct']}/{total})",
-        f"  Avg PRM:   {summary['avg_prm_score'] if summary['avg_prm_score'] is not None else 'n/a (disabled)'}",
+        f"  Avg {kind if kind != 'NONE' else 'PRM'}:   "
+        f"{summary['avg_prm_score'] if summary['avg_prm_score'] is not None else 'n/a (disabled)'}",
         f"  Parse failures: {summary['parse_failures']} ({summary['parse_failure_rate']:.0%})",
     ]
     cal = summary.get("prm_calibration") or {}
     if cal.get("auc") is not None:
         ci = cal.get("auc_ci")
         span = f" 95% CI [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else ""
-        lines.append(f"  PRM->correct AUC: {cal['auc']:.3f}{span}")
+        lines.append(f"  {kind}->correct AUC: {cal['auc']:.3f}{span}")
         if cal.get("auc_beats_chance") is False:
             lines.append(f"    not distinguishable from chance "
                          f"({cal.get('n_incorrect')} incorrect to rank against)")
@@ -489,11 +522,15 @@ def run_eval(config: EvalConfig, problems: list[dict] | None = None,
     backend_kwargs = {"think": config.think} if config.backend == "qwen" else {}
     backend = backend or build_backend(config.backend, config.model, on_log=log,
                                         **backend_kwargs)
-    scorer = scorer if scorer is not None else build_scorer(config.use_prm, on_log=log)
+    if scorer is None:
+        scorer = build_scorer(config.use_prm, config.scorer_kind, on_log=log,
+                              load_in_4bit=config.load_in_4bit)
+    scorer_model = getattr(scorer, "model_name", None)
 
     log(f"Model backend: {config.backend} ({backend.model})")
     log(f"k={config.k} temperature={config.resolved_temperature()} "
-        f"prm={'on' if config.use_prm else 'off'}")
+        f"scorer={config.scorer_kind if config.use_prm else 'off'}"
+        f"{f' ({scorer_model})' if scorer_model else ''}")
 
     if problems is None:
         problems = load_problems(config.num_questions, config.question)
@@ -521,10 +558,12 @@ def run_eval(config: EvalConfig, problems: list[dict] | None = None,
 
     synthetic = getattr(backend, "synthetic", False)
     if single and os.path.exists(results_path):
-        summary = _merge_single_question(config, results_path, results[0], backend.model)
+        summary = _merge_single_question(config, results_path, results[0],
+                                         backend.model, scorer_model=scorer_model)
     else:
         summary = aggregate(results, config, backend.model,
-                            duration=time.monotonic() - started, synthetic=synthetic)
+                            duration=time.monotonic() - started, synthetic=synthetic,
+                            scorer_model=scorer_model)
 
     with open(results_path, "w") as f:
         json.dump(summary, f, indent=2)

@@ -28,6 +28,8 @@ class FakeScorer:
     """
 
     enabled = True
+    kind = "prm"
+    model_name = "fake-prm"
 
     def __init__(self, base: float = 0.5):
         self.base = base
@@ -37,14 +39,44 @@ class FakeScorer:
         self.calls += 1
         return [min(0.99, self.base + 0.05 * i) for i in range(len(steps))]
 
-    def score(self, problem, steps):
+    def score(self, problem, steps, text=None):
         scores = self.step_scores(problem, steps)
         return sum(scores) / len(scores) if scores else None
+
+
+class FakeOutcomeScorer:
+    """Stand-in for the ORM: one score per solution, no step scores.
+
+    Derives the score from the response text so a test can tell whether the
+    runner actually handed the raw response over -- the ORM is useless if it
+    only ever sees the reconstructed steps, which drop the boxed answer.
+    """
+
+    enabled = True
+    kind = "orm"
+    model_name = "fake-orm"
+
+    def __init__(self):
+        self.seen_text = []
+
+    def step_scores(self, problem, steps):
+        return []
+
+    def score(self, problem, steps, text=None):
+        self.seen_text.append(text)
+        if not (text or steps):
+            return None
+        return 0.9 if "\\boxed" in (text or "") else 0.1
 
 
 @pytest.fixture
 def scorer():
     return FakeScorer()
+
+
+@pytest.fixture
+def outcome_scorer():
+    return FakeOutcomeScorer()
 
 
 @pytest.fixture

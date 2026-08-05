@@ -357,3 +357,29 @@ def test_rejects_single_backend_comparison(tmp_path, capsys):
 def test_warns_when_sampling_is_degenerate(tmp_path, capsys):
     run(tmp_path, "-n", "2", "-k", "3", "--temperature", "0")
     assert "identical samples" in capsys.readouterr().err
+
+
+# ── Scorer selection ──────────────────────────────────────────────────
+# These stop at parse_args on purpose: running --orm for real would fetch an
+# 8B reward model, which is exactly what the mock backend exists to avoid.
+def test_scorer_defaults_to_the_prm():
+    args = cli.parse_args(["-n", "1"])
+    assert args.orm is False and args.no_prm is False
+
+
+def test_orm_flag_selects_the_outcome_scorer():
+    assert cli.parse_args(["-n", "1", "--orm"]).orm is True
+
+
+def test_reward_model_runs_at_full_precision_unless_asked():
+    assert cli.parse_args(["-n", "1"]).load_in_4bit is False
+    assert cli.parse_args(["-n", "1", "--load-in-4bit"]).load_in_4bit is True
+
+
+def test_orm_and_no_prm_are_mutually_exclusive(capsys):
+    """"Score with the ORM" and "do not score" cannot both be the intent, and
+    silently letting one win would produce a run whose scores are not what the
+    command line asked for."""
+    with pytest.raises(SystemExit):
+        cli.parse_args(["-n", "1", "--orm", "--no-prm"])
+    assert "not allowed with" in capsys.readouterr().err
